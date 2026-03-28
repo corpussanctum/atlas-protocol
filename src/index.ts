@@ -270,6 +270,9 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
     });
 
     const reason = policyResult.matched_rule?.reason || "Policy rule match";
+    const mitreTag = policyResult.matched_rule?.mitre_id
+      ? `\nMITRE: <code>${escapeHtml(policyResult.matched_rule.mitre_id)}</code>`
+      : "";
     const sensitivityInfo = policyResult.sensitivity_matches.length > 0
       ? `\nData: ${policyResult.sensitivity_matches.map((s) => s.data_type).join(", ")}`
       : "";
@@ -277,7 +280,7 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
       .sendReply(
         `🚫 <b>AUTO-DENIED</b> by Fidelis policy:\n` +
           `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
-          `Reason: ${escapeHtml(reason)}${sensitivityInfo}`,
+          `Reason: ${escapeHtml(reason)}${mitreTag}${sensitivityInfo}`,
         { broadcast: true }
       )
       .catch(() => {});

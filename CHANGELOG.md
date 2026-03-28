@@ -2,6 +2,36 @@
 
 All notable changes to Fidelis Channel are documented in this file.
 
+## [0.3.1] - 2026-03-28
+
+### Added
+- **MITRE ATT&CK tagging** on all 96 policy rules — 64 unique technique IDs
+- **Kali/offensive security tool coverage** — 39 new deny rules covering:
+  - Reconnaissance: nmap, masscan, zmap, nikto, gobuster, ffuf, feroxbuster, recon-ng, theHarvester, amass, subfinder
+  - SMB/DNS enumeration: enum4linux, smbclient, smbmap, dnsrecon, dnsenum, fierce
+  - CMS scanning: wpscan, joomscan, whatweb, droopescan
+  - Exploitation frameworks: Metasploit (msfconsole, msfvenom), sqlmap, searchsploit, BeEF, XSSer
+  - Brute force: Hydra, Medusa, Patator, ncrack, John the Ripper, Hashcat, ophcrack
+  - Wordlist generation: CeWL, Crunch, CUPP
+  - Credential dumping: Mimikatz, LaZagne, Impacket (secretsdump, wmiexec, psexec.py), CrackMapExec
+  - C2 frameworks: Cobalt Strike, Sliver, Empire, Covenant, Havoc, Merlin, Mythic
+  - Network poisoning/MITM: Responder, Ettercap, Bettercap, arpspoof, mitmproxy
+  - AD/lateral movement: BloodHound, SharpHound, Kerbrute, Rubeus, Evil-WinRM
+  - Privilege escalation enumeration: LinPEAS, WinPEAS, LinEnum, linux-exploit-suggester, pspy
+  - Wireless attacks: aircrack-ng, airmon-ng, airodump-ng, wifite
+  - Packet crafting: hping3, scapy, tcpreplay
+  - Payload generation/evasion: Veil, Shellter, UPX packer
+  - Binary exploitation: ROPgadget, pwntools, ropper
+- **Anti-forensics detection** — history clearing, HISTFILE unsetting, journal log tampering, shred
+- **LOLBin network channels** — /dev/tcp redirects, openssl s_client, chisel, proxychains
+- **System credential file protection** — /etc/shadow, /etc/passwd read blocking
+- **MITRE ID in Telegram deny notifications** — operators see the ATT&CK technique on every auto-deny
+- 54 new tests (145 total, all passing)
+
+### Changed
+- Policy engine expanded from 50 to 96 rules (89 hard deny + 7 ask)
+- `PolicyRule` interface now includes optional `mitre_id` field
+
 ## [0.3.0] - 2026-03-28
 
 ### Added
