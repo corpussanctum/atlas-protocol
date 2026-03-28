@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <!-- Background circle -->
+  <circle cx="128" cy="128" r="120" fill="#0f172a"/>
+
+  <!-- Shield shape -->
+  <path d="M128 36 L196 68 L196 140 C196 180 164 212 128 228 C92 212 60 180 60 140 L60 68 Z"
+        fill="none" stroke="#38bdf8" stroke-width="6" stroke-linejoin="round"/>
+
+  <!-- Inner shield fill (subtle) -->
+  <path d="M128 48 L188 76 L188 138 C188 174 160 202 128 216 C96 202 68 174 68 138 L68 76 Z"
+        fill="#0f172a" stroke="none"/>
+
+  <!-- Chain links (three horizontal lines through shield = hash chain) -->
+  <line x1="88" y1="104" x2="168" y2="104" stroke="#22c55e" stroke-width="4" stroke-linecap="round"/>
+  <line x1="88" y1="128" x2="168" y2="128" stroke="#22c55e" stroke-width="4" stroke-linecap="round"/>
+  <line x1="88" y1="152" x2="168" y2="152" stroke="#22c55e" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Lock body (centered on middle chain line) -->
+  <rect x="112" y="112" width="32" height="28" rx="4" fill="#38bdf8"/>
+
+  <!-- Lock shackle -->
+  <path d="M118 112 L118 100 C118 90 138 90 138 100 L138 112"
+        fill="none" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Keyhole -->
+  <circle cx="128" cy="123" r="4" fill="#0f172a"/>
+  <rect x="126" y="123" width="4" height="8" rx="1" fill="#0f172a"/>
+</svg>
