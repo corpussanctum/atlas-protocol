@@ -1,6 +1,6 @@
 # Fidelis Channel
 
-A Claude Code plugin that relays tool-approval prompts to Telegram, enforces 50 hardened security rules locally, and records every decision in a tamper-evident audit log.
+A Claude Code plugin that relays tool-approval prompts to Telegram, enforces 96 hardened security rules locally, and records every decision in a quantum-resistant, tamper-evident audit log.
 
 Fidelis is designed around a single assumption: **the agent might be compromised**. Every default is fail-closed — no token means no approvals, no chat ID means no inbound messages, and timeouts always deny.
 
@@ -14,7 +14,7 @@ Claude Code ──► Policy Engine ──► Telegram (operator) ──► Appr
                    └── ask ──────────────────────────────────────┘
                                                                 │
                                                           Audit Log
-                                              (SHA-256 chain + optional HMAC)
+                                       (SHA3-256 chain + ML-DSA-65 + HMAC)
 ```
 
 When Claude Code requests permission to run a tool:
@@ -139,8 +139,8 @@ Fidelis exposes three MCP tools to the Claude Code session:
 | Tool | Description |
 |---|---|
 | `fidelis_reply` | Send a message to the operator. Targets the most recent authorized chat by default. Pass `broadcast=true` to send to all authorized chats, or `chat_id` to target a specific one. HTML is escaped unless `raw_html=true`. |
-| `fidelis_audit_verify` | Verify the integrity of the audit log's SHA-256 hash chain and HMAC signatures. |
-| `fidelis_status` | Return a runtime snapshot: Telegram connection state, policy rule count, audit settings, identity context, and pending verdicts. |
+| `fidelis_audit_verify` | Verify the audit log's SHA3-256 hash chain, HMAC signatures, and ML-DSA-65 post-quantum signatures. Returns verification stats. |
+| `fidelis_status` | Return a runtime snapshot: Telegram connection state, quantum signing status, policy rule count, audit settings, identity context, and pending verdicts. |
 
 ## Skills
 
@@ -154,7 +154,29 @@ Three slash commands are available inside a Claude Code session:
 
 ## Audit log
 
-The audit log is append-only JSONL with SHA-256 hash chaining. Each line contains the hash of the previous line, forming a tamper-evident chain. If an HMAC secret is configured, entries are also signed with HMAC-SHA256.
+The audit log is append-only JSONL with three layers of integrity protection:
+
+1. **SHA3-256 hash chaining** — each line contains the hash of the previous line, forming a tamper-evident chain. SHA3-256 is resistant to length-extension attacks and provides quantum-resistant hash integrity.
+
+2. **ML-DSA-65 post-quantum signatures** (FIPS 204) — every entry is signed with a per-instance ML-DSA-65 keypair. This ensures non-repudiation holds against harvest-now-decrypt-later adversaries who may challenge the audit trail 10-15+ years in the future.
+
+3. **HMAC-SHA256 classical signatures** (optional) — if `FIDELIS_HMAC_SECRET` is configured, entries are also signed with a classical HMAC for backwards compatibility.
+
+### Structured entry schema
+
+Each audit entry includes:
+
+| Field | Description |
+|---|---|
+| `id` | UUID |
+| `timestamp` | ISO 8601 |
+| `event` | Event type (see below) |
+| `rule_id` | Matched policy rule pattern |
+| `mitre` | ATT&CK enrichment: `{ id, name, tactic }` |
+| `hash_algorithm` | `"sha3-256"` (absent on legacy entries) |
+| `prev_hash` | SHA3-256 of previous log line |
+| `hmac` | HMAC-SHA256 signature (if configured) |
+| `pq_signature` | ML-DSA-65 signature, base64-encoded |
 
 ### Event types
 
@@ -169,6 +191,10 @@ The audit log is append-only JSONL with SHA-256 hash chaining. Each line contain
 | `IDENTITY_LOADED` | Briefcase identity context loaded |
 
 The distinction between `HUMAN_DENY` and `TIMEOUT_DENY` matters for auditing whether a denial was an active decision or a fail-closed default.
+
+### Key management
+
+The ML-DSA-65 signing keypair is auto-generated on first run and stored at `<data_dir>/quantum-keypair.json` (mode 0600). The public key hash is logged in the `SESSION_START` audit entry for key pinning. To verify logs from a different instance, load the public key from the originating keypair file.
 
 ## Identity and Briefcase integration
 
@@ -192,13 +218,15 @@ This is an optional hardening layer. Fidelis works fully without it.
 src/
 ├── index.ts               # MCP server entry point + permission handler
 ├── policy-engine.ts       # Rule evaluation, anomaly detection, velocity tracking
-├── audit-log.ts           # Append-only JSONL with SHA-256 chain + HMAC
+├── audit-log.ts           # Append-only JSONL with SHA3-256 chain + ML-DSA-65 + HMAC
+├── quantum-signer.ts      # ML-DSA-65 keypair management, signing, verification
+├── mitre-attack.ts        # ATT&CK technique → name + tactic lookup table
 ├── identity-provider.ts   # DIB Briefcase integration (consent tiers)
 ├── telegram.ts            # Telegram Bot API client (native fetch, long-polling)
-└── config.ts              # Configuration loader + 50 default rules
+└── config.ts              # Configuration loader + 96 default rules
 ```
 
-**Dependencies are minimal by design**: `@modelcontextprotocol/sdk` and `zod`. The Telegram client uses Node's native `fetch` — no HTTP library needed.
+**Dependencies are minimal by design**: `@modelcontextprotocol/sdk`, `zod`, and `@noble/post-quantum` (pure JS ML-DSA-65, no native bindings). The Telegram client uses Node's native `fetch` — no HTTP library needed.
 
 ## Testing
 

@@ -2,6 +2,39 @@
 
 All notable changes to Fidelis Channel are documented in this file.
 
+## [0.4.0] - 2026-03-28
+
+### Added
+- **ML-DSA-65 post-quantum signatures** on every audit log entry (FIPS 204)
+  - Keypair auto-generated on first run, stored in data directory (chmod 600)
+  - Public key hash logged at session start for key pinning
+  - Signatures verified during `fidelis_audit_verify`
+  - Designed for harvest-now-decrypt-later threat model (10-15+ year non-repudiation)
+- **SHA3-256 hash chaining** replaces SHA-256 for quantum-resistant tamper detection
+  - Backwards-compatible verifier handles legacy SHA-256 entries
+  - `hash_algorithm` field on each entry disambiguates the chain algorithm
+- **MITRE ATT&CK enrichment** on every policy decision audit entry
+  - `rule_id` field captures the matched policy rule
+  - `mitre` object includes technique ID, name, and tactic
+  - Static lookup table covers all 65+ techniques in the default ruleset
+- **Structured verification stats** from `fidelis_audit_verify`:
+  total entries, PQ-signed count, HMAC-signed count, legacy entry count
+- New dependency: `@noble/post-quantum` (pure JS ML-DSA-65, no native bindings)
+- New source files: `quantum-signer.ts`, `mitre-attack.ts`
+- New test suite: `quantum-signer.test.ts` (keypair management, signing, verification, tamper detection)
+
+### Changed
+- Version bumped to 0.4.0 (quantum-hardened audit release)
+- Audit log entry schema extended with `hash_algorithm`, `rule_id`, `mitre`, `pq_signature` fields
+- `fidelis_audit_verify` now reports verification stats (PQ signatures, HMAC, legacy entries)
+- `fidelis_status` now includes quantum signing status and audit hash algorithm
+
+### Security
+- ML-DSA-65 provides non-repudiation against quantum adversaries
+- SHA3-256 chain is resistant to length-extension attacks (unlike SHA-256)
+- Keypair file restricted to owner read/write (0600)
+- Graceful degradation: if `@noble/post-quantum` is unavailable, entries are unsigned but logging continues
+
 ## [0.3.1] - 2026-03-28
 
 ### Added
