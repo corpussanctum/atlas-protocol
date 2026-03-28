@@ -6,3 +6,7 @@ dist/
 audit.jsonl
 .claude/
 .test-dist/
+
+# MCP config files (contain credentials)
+.mcp.json
+.mcp.local.json

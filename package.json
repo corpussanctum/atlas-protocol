@@ -1,6 +1,6 @@
 {
   "name": "fidelis-channel",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Telegram approval channel for Claude Code with fail-closed permission relay, policy rules, and tamper-evident audit logging.",
   "type": "module",
   "main": "dist/index.js",
@@ -25,6 +25,21 @@
   ],
   "author": "TJ Lane <tj@corpussanctum.ai>",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/corpussanctum/fidelis-channel.git"
+  },
+  "homepage": "https://github.com/corpussanctum/fidelis-channel#readme",
+  "bugs": {
+    "url": "https://github.com/corpussanctum/fidelis-channel/issues"
+  },
+  "files": [
+    "dist/",
+    ".claude-plugin/",
+    "sample-briefcase/",
+    "LICENSE",
+    "README.md"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "zod": "^3.24.0"

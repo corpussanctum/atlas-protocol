@@ -99,20 +99,294 @@ function buildDefaults(): FidelisConfig {
     telegram_poll_interval_ms: 1000,
     permission_timeout_seconds: 120,
     policy_rules: [
+      // =================================================================
+      // HARD DENY — never allowed, no human override via policy engine
+      // =================================================================
+
+      // -- Filesystem destruction -----------------------------------------
       {
         tool_pattern: "Bash(rm -rf *)",
         action: "deny",
         reason: "Recursive force-delete blocked by Fidelis policy",
       },
       {
+        tool_pattern: "Bash(*rm -rf /*)",
+        action: "deny",
+        reason: "Root-level recursive delete blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*mkfs*|*wipefs*)",
+        action: "deny",
+        reason: "Filesystem format/wipe blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*dd if=*of=/dev*)",
+        action: "deny",
+        reason: "Raw block device write blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*> /dev/sd*|*> /dev/nvme*|*> /dev/vd*)",
+        action: "deny",
+        reason: "Block device overwrite blocked by Fidelis policy",
+      },
+
+      // -- Safety bypass flags --------------------------------------------
+      {
         tool_pattern: "Bash(*--skip-verification*)",
         action: "deny",
         reason: "Safety bypass flags blocked by Fidelis policy",
       },
       {
+        tool_pattern: "Bash(*--no-verify*)",
+        action: "deny",
+        reason: "Hook bypass (--no-verify) blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*--no-check*|*--insecure*|*--trust-all*)",
+        action: "deny",
+        reason: "Security check bypass blocked by Fidelis policy",
+      },
+
+      // -- Network exfiltration / C2 -------------------------------------
+      {
         tool_pattern: "Bash(*curl*|*wget*|*nc *|*netcat*)",
         action: "deny",
         reason: "Network exfiltration tool blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*scp *|*rsync *|*ftp *|*sftp *)",
+        action: "deny",
+        reason: "File transfer tool blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*python*http.server*|*python*SimpleHTTP*|*python*-m*http*)",
+        action: "deny",
+        reason: "Ad-hoc HTTP server blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*socat*|*ncat*|*telnet *)",
+        action: "deny",
+        reason: "Network socket tool blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*ngrok*|*localtunnel*|*cloudflared*tunnel*)",
+        action: "deny",
+        reason: "Tunnel/reverse proxy tool blocked by Fidelis policy",
+      },
+
+      // -- Credential / secret theft --------------------------------------
+      {
+        tool_pattern: "Bash(*cat*.env*|*less*.env*|*more*.env*|*head*.env*|*tail*.env*)",
+        action: "deny",
+        reason: "Direct .env file read via shell blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*cat*.ssh/*|*cat*.gnupg/*|*cat*credentials*|*cat*id_rsa*|*cat*id_ed25519*)",
+        action: "deny",
+        reason: "Credential/key file read blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Read(*.env)",
+        action: "deny",
+        reason: "Direct .env file read blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Read(*/.env*)",
+        action: "deny",
+        reason: ".env file read blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Read(*/.ssh/*)",
+        action: "deny",
+        reason: "SSH key read blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Read(*id_rsa*|*id_ed25519*|*id_ecdsa*)",
+        action: "deny",
+        reason: "Private key read blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Read(*/.gnupg/*)",
+        action: "deny",
+        reason: "GPG keyring read blocked by Fidelis policy",
+      },
+
+      // -- Git destructive operations -------------------------------------
+      {
+        tool_pattern: "Bash(*git push*--force*|*git push*-f *|*git push*-f)",
+        action: "deny",
+        reason: "Force push blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*git reset --hard*)",
+        action: "deny",
+        reason: "Hard reset blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*git clean -fd*|*git clean -fx*|*git clean -xfd*)",
+        action: "deny",
+        reason: "Git clean (force-delete untracked) blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*git checkout -- .*|*git restore .*)",
+        action: "deny",
+        reason: "Wholesale working tree discard blocked by Fidelis policy",
+      },
+
+      // -- Privilege escalation -------------------------------------------
+      {
+        tool_pattern: "Bash(*chmod 777*|*chmod -R 777*)",
+        action: "deny",
+        reason: "World-writable permissions blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*chmod u+s*|*chmod g+s*)",
+        action: "deny",
+        reason: "SUID/SGID bit manipulation blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*chown root*|*chgrp root*)",
+        action: "deny",
+        reason: "Ownership change to root blocked by Fidelis policy",
+      },
+
+      // -- Firewall / network defense teardown ----------------------------
+      {
+        tool_pattern: "Bash(*iptables -F*|*iptables --flush*|*ip6tables -F*)",
+        action: "deny",
+        reason: "Firewall flush blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*ufw disable*|*ufw reset*)",
+        action: "deny",
+        reason: "UFW disable/reset blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*nft flush*|*nft delete*)",
+        action: "deny",
+        reason: "nftables flush/delete blocked by Fidelis policy",
+      },
+
+      // -- Container escape / infrastructure destruction ------------------
+      {
+        tool_pattern: "Bash(*docker run*--privileged*)",
+        action: "deny",
+        reason: "Privileged container launch blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*docker run*--pid=host*|*docker run*--net=host*)",
+        action: "deny",
+        reason: "Host-namespace container launch blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*docker system prune*)",
+        action: "deny",
+        reason: "Docker system prune blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*docker rm -f*|*docker kill*)",
+        action: "deny",
+        reason: "Force container removal/kill blocked by Fidelis policy",
+      },
+
+      // -- Crypto-mining / abuse ------------------------------------------
+      {
+        tool_pattern: "Bash(*xmrig*|*cpuminer*|*minerd*|*cryptonight*)",
+        action: "deny",
+        reason: "Cryptocurrency miner blocked by Fidelis policy",
+      },
+
+      // -- Shell escape / obfuscation vectors -----------------------------
+      {
+        tool_pattern: "Bash(*bash -c*base64*|*sh -c*base64*)",
+        action: "deny",
+        reason: "Base64-decoded shell execution blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*eval*$(base64*|*eval*$(curl*)",
+        action: "deny",
+        reason: "Dynamic eval with network/encoding blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*python*-c*import*socket*|*python*-c*import*subprocess*)",
+        action: "deny",
+        reason: "Python reverse shell pattern blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*perl*-e*socket*|*ruby*-e*socket*)",
+        action: "deny",
+        reason: "Scripted reverse shell pattern blocked by Fidelis policy",
+      },
+
+      // -- Write to sensitive system paths --------------------------------
+      {
+        tool_pattern: "Write(/etc/*)",
+        action: "deny",
+        reason: "Write to /etc blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Write(*/.ssh/*)",
+        action: "deny",
+        reason: "Write to SSH config/keys blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Write(*/.bashrc|*/.bash_profile|*/.profile|*/.zshrc)",
+        action: "deny",
+        reason: "Shell profile modification blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Write(*/crontab*|*/cron.d/*)",
+        action: "deny",
+        reason: "Crontab modification blocked by Fidelis policy",
+      },
+
+      // =================================================================
+      // ASK — dangerous but sometimes legitimate, require human approval
+      // =================================================================
+
+      // -- Service lifecycle (may need for legitimate maintenance) ---------
+      {
+        tool_pattern: "Bash(*systemctl stop*|*systemctl disable*|*systemctl mask*)",
+        action: "ask",
+        reason: "Service stop/disable requires operator approval",
+      },
+      {
+        tool_pattern: "Bash(*systemctl restart*|*systemctl reload*)",
+        action: "ask",
+        reason: "Service restart/reload requires operator approval",
+      },
+
+      // -- Docker compose lifecycle ---------------------------------------
+      {
+        tool_pattern: "Bash(*docker compose down*|*docker compose rm*)",
+        action: "ask",
+        reason: "Docker compose teardown requires operator approval",
+      },
+      {
+        tool_pattern: "Bash(*docker compose up*|*docker compose restart*)",
+        action: "ask",
+        reason: "Docker compose lifecycle change requires operator approval",
+      },
+
+      // -- Database destructive operations --------------------------------
+      {
+        tool_pattern: "Bash(*DROP TABLE*|*DROP DATABASE*|*TRUNCATE*|*DELETE FROM*)",
+        action: "ask",
+        reason: "Destructive SQL operation requires operator approval",
+      },
+
+      // -- Package management (supply chain risk) -------------------------
+      {
+        tool_pattern: "Bash(*npm install*|*pip install*|*apt install*|*apt-get install*)",
+        action: "ask",
+        reason: "Package installation requires operator approval",
+      },
+
+      // -- Git push (any) -------------------------------------------------
+      {
+        tool_pattern: "Bash(*git push*)",
+        action: "ask",
+        reason: "Git push requires operator approval",
       },
     ],
     audit_log_path: defaultAuditPath(dataDir),
