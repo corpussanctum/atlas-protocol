@@ -21,14 +21,20 @@
       "server": "fidelis-channel",
       "userConfig": {
         "bot_token": {
+          "title": "Telegram Bot Token",
+          "type": "string",
           "description": "Telegram bot token from @BotFather",
           "sensitive": true
         },
         "owner_chat_ids": {
+          "title": "Authorized Chat IDs",
+          "type": "string",
           "description": "Comma-separated Telegram chat IDs allowed to send messages and approve requests",
           "sensitive": false
         },
         "audit_hmac_secret": {
+          "title": "Audit HMAC Secret",
+          "type": "string",
           "description": "Optional HMAC secret for signing audit entries. Leave blank to use hash chaining only.",
           "sensitive": true
         }
