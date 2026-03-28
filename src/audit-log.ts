@@ -24,6 +24,7 @@ import type { PolicyResult, PermissionRequest } from "./policy-engine.js";
 import type { QuantumSigner } from "./quantum-signer.js";
 import { enrichMitre } from "./mitre-attack.js";
 import type { AttackTechnique } from "./mitre-attack.js";
+import type { AgentRole } from "./agent-identity.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,6 +57,18 @@ export interface AuditEntry {
   mitre?: AttackTechnique;
 
   meta?: Record<string, unknown>;
+
+  // -- Agent identity attestation (v0.5.0+) --------------------------------
+  /** DID of the attested agent (did:fidelis:<uuid>) */
+  agentId?: string;
+  /** Whether the agent's credential was verified for this entry */
+  identityVerified?: boolean;
+  /** When the agent's credential expires */
+  credentialExpiry?: string;
+  /** Agent's declared role */
+  agentRole?: AgentRole;
+  /** Reason attestation was denied (if applicable) */
+  attestationDenyReason?: string;
 
   /** Hash algorithm used for prev_hash (absent on legacy SHA-256 entries) */
   hash_algorithm?: "sha3-256";

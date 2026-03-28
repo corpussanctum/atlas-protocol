@@ -191,6 +191,21 @@ export class QuantumSigner {
   }
 
   /**
+   * Get the raw public key bytes (for credential verification).
+   */
+  getPublicKeyRaw(): Uint8Array | null {
+    return this.publicKey;
+  }
+
+  /**
+   * Get the raw secret key bytes (for credential signing).
+   * Handle with care — this is the gatekeeper's issuer key.
+   */
+  getSecretKeyRaw(): Uint8Array | null {
+    return this.secretKey;
+  }
+
+  /**
    * Load a public key from base64 for verification-only mode
    * (e.g., verifying logs signed by another instance).
    */

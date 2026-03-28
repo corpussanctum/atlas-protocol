@@ -2,6 +2,48 @@
 
 All notable changes to Fidelis Channel are documented in this file.
 
+## [0.5.0] - 2026-03-28
+
+### Added
+- **Agent Identity Attestation** — every agent must present a signed credential
+  - DID-format agent IDs (`did:fidelis:<uuid>`)
+  - ML-DSA-65 issuer-signed credentials with SHA3-256 credential hashes
+  - Per-agent ML-DSA-65 keypairs generated at registration
+  - Role-based access: `claude-code`, `orchestrator`, `tool-caller`, `observer`, `admin`
+  - 13 granular capabilities (`file:read`, `shell:exec`, `identity:register`, etc.)
+  - Configurable TTL (default 24h) with expiry enforcement
+  - Credential revocation with reason tracking
+- **Identity Registry** with JSON file persistence (chmod 600)
+  - Auto-save on mutation, auto-load on startup
+  - Filter by: active, revoked, expired, all
+  - Bootstrap guard: first-run allows through unverified (no self-lock)
+- **Attestation layer** integrated before policy evaluation
+  - Deny paths: `UNREGISTERED_AGENT`, `CREDENTIAL_EXPIRED`, `CREDENTIAL_REVOKED`, `CAPABILITY_MISMATCH`
+  - Tool-to-capability mapping (Read→file:read, Bash→shell:exec, etc.)
+  - All audit entries enriched with identity fields
+- **4 new MCP tools**:
+  - `fidelis_identity_register` — issue a signed agent credential
+  - `fidelis_identity_verify` — verify an agent's credential status
+  - `fidelis_identity_list` — list credentials with filtering
+  - `fidelis_identity_revoke` — revoke a credential with reason
+- **5 new identity fields** on AuditEntry (additive, no breaking changes):
+  `agentId`, `identityVerified`, `credentialExpiry`, `agentRole`, `attestationDenyReason`
+- New source files: `agent-identity.ts`, `identity-registry.ts`, `attestation.ts`
+- New test suites: `agent-identity.test.ts`, `identity-registry.test.ts`, `attestation.test.ts`
+- Key accessors on QuantumSigner: `getPublicKeyRaw()`, `getSecretKeyRaw()`
+
+### Changed
+- Version bumped to 0.5.0 (agent identity attestation release)
+- Permission request handler now runs attestation before policy evaluation
+- `fidelis_status` reports agent registry state and session agent ID
+- Telegram denial messages include agent ID for traceability
+
+### Security
+- Credentials are issuer-signed with ML-DSA-65 (post-quantum non-repudiation)
+- Agent secret keys never stored in registry or exposed via MCP tools
+- Registry file restricted to owner read/write (0600)
+- Bootstrap guard prevents self-lock on first run while enforcing identity after first registration
+
 ## [0.4.0] - 2026-03-28
 
 ### Added

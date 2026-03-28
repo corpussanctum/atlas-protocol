@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Fidelis Channel — Claude Code Channels Plugin (v0.4.0)
+ * Fidelis Channel — Claude Code Channels Plugin (v0.5.0)
  *
  * Telegram approval channel for Claude Code with:
+ *   - agent identity attestation (ML-DSA-65 signed credentials)
  *   - fail-closed permission relay
  *   - configurable deny/ask/allow policy rules
  *   - tamper-evident audit logging (SHA3-256 chain + ML-DSA-65 signatures)
@@ -26,8 +27,21 @@ import { TelegramBot } from "./telegram.js";
 import { createIdentityProvider } from "./identity-provider.js";
 import type { IdentityContext } from "./identity-provider.js";
 import { QuantumSigner } from "./quantum-signer.js";
+import { IdentityRegistry } from "./identity-registry.js";
+import { attestAgent, enrichAuditEntry, toolToCapability, sanitizeCredential } from "./attestation.js";
+import type { AgentRole, AgentCapability } from "./agent-identity.js";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
+
+const VALID_ROLES: AgentRole[] = ["claude-code", "orchestrator", "tool-caller", "observer", "admin"];
+const VALID_CAPABILITIES: AgentCapability[] = [
+  "file:read", "file:write", "file:delete",
+  "shell:exec", "shell:read",
+  "network:outbound", "network:inbound",
+  "process:spawn", "process:kill",
+  "credential:read", "audit:read",
+  "identity:register", "identity:revoke",
+];
 
 const PermissionRequestSchema = z.object({
   method: z.literal("notifications/claude/channel/permission_request"),
@@ -47,6 +61,12 @@ async function main(): Promise<void> {
 
   // Initialize ML-DSA-65 quantum signer
   const signer = await QuantumSigner.create(config.data_dir);
+
+  // Initialize identity registry
+  const registry = await IdentityRegistry.create(config.data_dir, signer);
+
+  // Session-level active agent ID (set by fidelis_identity_register)
+  let sessionAgentId: string | undefined;
 
   const audit = new AuditLogger(
     config,
@@ -77,6 +97,7 @@ async function main(): Promise<void> {
       identity_principal: identityContext.principal_label || null,
       identity_max_tier: identityContext.loaded ? identityContext.max_tier_present : null,
       briefcase_path: config.briefcase_path || null,
+      agent_registry_size: registry.size,
     },
   });
   audit.log("CONFIG_LOADED", {
@@ -120,9 +141,14 @@ async function main(): Promise<void> {
         "Permission requests are evaluated by a local policy engine before being relayed to Telegram.",
         "When no verdict arrives before the timeout, Fidelis denies the request by design.",
         "Use fidelis_audit_verify to verify the audit log and fidelis_status to inspect runtime status.",
+        "Use fidelis_identity_register to register this agent session with the gatekeeper.",
       ].join("\n"),
     }
   );
+
+  // =========================================================================
+  // MCP Tool definitions
+  // =========================================================================
 
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
@@ -133,51 +159,91 @@ async function main(): Promise<void> {
         inputSchema: {
           type: "object" as const,
           properties: {
-            message: {
-              type: "string",
-              description: "The message text to send (HTML formatting supported)",
-            },
-            chat_id: {
-              type: "integer",
-              description: "Optional Telegram chat ID to target explicitly",
-            },
-            broadcast: {
-              type: "boolean",
-              description: "Set true to send to all authorized chats",
-            },
-            raw_html: {
-              type: "boolean",
-              description: "Set true to send message as trusted Telegram HTML. Default is false and content is escaped.",
-            },
+            message: { type: "string", description: "The message text to send" },
+            chat_id: { type: "integer", description: "Optional Telegram chat ID" },
+            broadcast: { type: "boolean", description: "Send to all authorized chats" },
+            raw_html: { type: "boolean", description: "Send as trusted Telegram HTML" },
           },
           required: ["message"],
         },
       },
       {
         name: "fidelis_audit_verify",
-        description:
-          "Verify the integrity of the Fidelis audit log. Checks SHA3-256 hash chain, HMAC signatures, and ML-DSA-65 post-quantum signatures.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {},
-        },
+        description: "Verify audit log integrity: SHA3-256 chain, HMAC, and ML-DSA-65 signatures.",
+        inputSchema: { type: "object" as const, properties: {} },
       },
       {
         name: "fidelis_status",
+        description: "Get Fidelis runtime status including identity registry, quantum signing, and Telegram state.",
+        inputSchema: { type: "object" as const, properties: {} },
+      },
+      // -- Identity management tools (v0.5.0) --------------------------------
+      {
+        name: "fidelis_identity_register",
         description:
-          "Get the current Fidelis runtime status, including Telegram readiness, quantum signing status, allowed chats, audit settings, and pending verdict count.",
+          "Register a new agent identity with the gatekeeper. Returns a signed credential. " +
+          "First registration (bootstrap) is unrestricted. Subsequent registrations require identity:register capability.",
         inputSchema: {
           type: "object" as const,
-          properties: {},
+          properties: {
+            name: { type: "string", description: "Agent display name" },
+            role: { type: "string", enum: VALID_ROLES, description: "Agent role" },
+            capabilities: {
+              type: "array",
+              items: { type: "string", enum: VALID_CAPABILITIES },
+              description: "List of granted capabilities",
+            },
+            ttl_hours: { type: "number", description: "Credential TTL in hours (default: 24)" },
+          },
+          required: ["name", "role", "capabilities"],
+        },
+      },
+      {
+        name: "fidelis_identity_verify",
+        description: "Verify an agent credential by agentId.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            agent_id: { type: "string", description: "The did:fidelis:<uuid> to verify" },
+          },
+          required: ["agent_id"],
+        },
+      },
+      {
+        name: "fidelis_identity_list",
+        description: "List agent credentials. Filter: active, revoked, expired, or all.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            filter: { type: "string", enum: ["active", "revoked", "expired", "all"], description: "Filter (default: active)" },
+          },
+        },
+      },
+      {
+        name: "fidelis_identity_revoke",
+        description: "Revoke an agent credential by agentId.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            agent_id: { type: "string", description: "The did:fidelis:<uuid> to revoke" },
+            reason: { type: "string", description: "Reason for revocation" },
+          },
+          required: ["agent_id", "reason"],
         },
       },
     ],
   }));
 
+  // =========================================================================
+  // MCP Tool handlers
+  // =========================================================================
+
   mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     switch (name) {
+      // -- Existing tools ---------------------------------------------------
+
       case "fidelis_reply": {
         const message = (args?.message as string) || "";
         const chatId = typeof args?.chat_id === "number" ? args.chat_id : undefined;
@@ -185,52 +251,29 @@ async function main(): Promise<void> {
         const rawHtml = Boolean(args?.raw_html);
 
         if (!message) {
-          return {
-            content: [{ type: "text" as const, text: "Error: message is required" }],
-            isError: true,
-          };
+          return { content: [{ type: "text" as const, text: "Error: message is required" }], isError: true };
         }
 
         try {
           const renderedMessage = rawHtml ? message : escapeHtml(message);
-          await telegram.sendReply(`💬 <b>Claude:</b>\n${renderedMessage}`, {
-            chatId,
-            broadcast,
-          });
-          return {
-            content: [{ type: "text" as const, text: "Message sent to Telegram." }],
-          };
+          await telegram.sendReply(`💬 <b>Claude:</b>\n${renderedMessage}`, { chatId, broadcast });
+          return { content: [{ type: "text" as const, text: "Message sent to Telegram." }] };
         } catch (error) {
-          return {
-            content: [{ type: "text" as const, text: `Error: ${(error as Error).message}` }],
-            isError: true,
-          };
+          return { content: [{ type: "text" as const, text: `Error: ${(error as Error).message}` }], isError: true };
         }
       }
 
       case "fidelis_audit_verify": {
         const result = audit.verify();
         const lines = [
-          result.valid
-            ? "✅ Audit log integrity verified."
-            : "❌ Audit log integrity FAILED:",
+          result.valid ? "✅ Audit log integrity verified." : "❌ Audit log integrity FAILED:",
         ];
-
-        if (!result.valid) {
-          lines.push(...result.errors);
-        }
-
-        lines.push("");
-        lines.push(`Entries: ${result.stats.total_entries}`);
+        if (!result.valid) lines.push(...result.errors);
+        lines.push("", `Entries: ${result.stats.total_entries}`);
         lines.push(`ML-DSA-65 signed: ${result.stats.pq_signed}`);
         lines.push(`HMAC signed: ${result.stats.hmac_signed}`);
-        if (result.stats.legacy_sha256 > 0) {
-          lines.push(`Legacy SHA-256 entries: ${result.stats.legacy_sha256}`);
-        }
-
-        return {
-          content: [{ type: "text" as const, text: lines.join("\n") }],
-        };
+        if (result.stats.legacy_sha256 > 0) lines.push(`Legacy SHA-256 entries: ${result.stats.legacy_sha256}`);
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       }
 
       case "fidelis_status": {
@@ -239,8 +282,7 @@ async function main(): Promise<void> {
         const status = {
           version: VERSION,
           telegram_connected: !!config.telegram_bot_token,
-          channel_ready:
-            !!config.telegram_bot_token && config.telegram_allowed_chat_ids.length > 0,
+          channel_ready: !!config.telegram_bot_token && config.telegram_allowed_chat_ids.length > 0,
           allowed_chat_ids: config.telegram_allowed_chat_ids,
           pending_verdicts: telegramStatus.pending_verdicts,
           last_inbound_chat_id: telegramStatus.last_inbound_chat_id,
@@ -253,6 +295,12 @@ async function main(): Promise<void> {
             hmac_signing: !!config.audit_hmac_secret,
             quantum_signing: signerStatus,
           },
+          agent_identity: {
+            session_agent_id: sessionAgentId || null,
+            registry_size: registry.size,
+            active_credentials: registry.list("active").length,
+            bootstrap_mode: registry.isEmpty(),
+          },
           data_dir: config.data_dir,
           identity: {
             loaded: identityContext.loaded,
@@ -264,18 +312,113 @@ async function main(): Promise<void> {
             briefcase_path: config.briefcase_path || null,
           },
         };
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }],
-        };
+        return { content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }] };
+      }
+
+      // -- Identity management tools (v0.5.0) --------------------------------
+
+      case "fidelis_identity_register": {
+        const regName = args?.name as string;
+        const role = args?.role as AgentRole;
+        const capabilities = args?.capabilities as AgentCapability[];
+        const ttlHours = typeof args?.ttl_hours === "number" ? args.ttl_hours : undefined;
+
+        if (!regName || !role || !capabilities || !Array.isArray(capabilities)) {
+          return { content: [{ type: "text" as const, text: "Error: name, role, and capabilities are required" }], isError: true };
+        }
+        if (!VALID_ROLES.includes(role)) {
+          return { content: [{ type: "text" as const, text: `Error: invalid role '${role}'. Valid: ${VALID_ROLES.join(", ")}` }], isError: true };
+        }
+        for (const cap of capabilities) {
+          if (!VALID_CAPABILITIES.includes(cap)) {
+            return { content: [{ type: "text" as const, text: `Error: invalid capability '${cap}'. Valid: ${VALID_CAPABILITIES.join(", ")}` }], isError: true };
+          }
+        }
+
+        // Auth check: bootstrap (empty registry) or caller has identity:register
+        if (!registry.isEmpty()) {
+          if (!sessionAgentId) {
+            return { content: [{ type: "text" as const, text: "Error: no active session agent. Register fails — bootstrap already complete." }], isError: true };
+          }
+          const callerCred = registry.get(sessionAgentId);
+          if (!callerCred || !callerCred.capabilities.includes("identity:register")) {
+            return { content: [{ type: "text" as const, text: "Error: active agent lacks identity:register capability" }], isError: true };
+          }
+        }
+
+        try {
+          const credential = registry.register({ name: regName, role, capabilities, ttlHours });
+          sessionAgentId = credential.agentId;
+
+          audit.log("CONFIG_LOADED", {
+            meta: {
+              event_detail: "AGENT_REGISTERED",
+              agent_id: credential.agentId,
+              agent_name: credential.name,
+              agent_role: credential.role,
+              capabilities: credential.capabilities,
+              expires_at: credential.expiresAt,
+            },
+          });
+
+          const safe = sanitizeCredential(credential);
+          return { content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${(error as Error).message}` }], isError: true };
+        }
+      }
+
+      case "fidelis_identity_verify": {
+        const verifyId = args?.agent_id as string;
+        if (!verifyId) {
+          return { content: [{ type: "text" as const, text: "Error: agent_id is required" }], isError: true };
+        }
+        const result = registry.verify(verifyId);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case "fidelis_identity_list": {
+        const filter = (args?.filter as "active" | "revoked" | "expired" | "all") || "active";
+        const credentials = registry.list(filter).map(sanitizeCredential);
+        return { content: [{ type: "text" as const, text: JSON.stringify(credentials, null, 2) }] };
+      }
+
+      case "fidelis_identity_revoke": {
+        const revokeId = args?.agent_id as string;
+        const reason = args?.reason as string;
+        if (!revokeId || !reason) {
+          return { content: [{ type: "text" as const, text: "Error: agent_id and reason are required" }], isError: true };
+        }
+
+        const success = registry.revoke(revokeId, reason);
+        if (!success) {
+          return { content: [{ type: "text" as const, text: `Error: agent ${revokeId} not found` }], isError: true };
+        }
+
+        // Clear session agent if it was revoked
+        if (sessionAgentId === revokeId) {
+          sessionAgentId = undefined;
+        }
+
+        audit.log("CONFIG_LOADED", {
+          meta: {
+            event_detail: "AGENT_REVOKED",
+            agent_id: revokeId,
+            reason,
+          },
+        });
+
+        return { content: [{ type: "text" as const, text: `Agent ${revokeId} revoked: ${reason}` }] };
       }
 
       default:
-        return {
-          content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],
-          isError: true,
-        };
+        return { content: [{ type: "text" as const, text: `Unknown tool: ${name}` }], isError: true };
     }
   });
+
+  // =========================================================================
+  // Permission request handler (with attestation)
+  // =========================================================================
 
   mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
     const req: PermissionRequest = {
@@ -285,22 +428,85 @@ async function main(): Promise<void> {
       input_preview: params.input_preview,
     };
 
-    audit.log("PERMISSION_REQUEST", { permission: req });
+    // --- Step 1: Agent attestation (before policy evaluation) ---------------
+    const requiredCap = toolToCapability(req.tool_name);
+    const attestation = attestAgent(registry, sessionAgentId, requiredCap);
 
+    // Enrich the initial permission request log with identity
+    const enrichedMeta = {
+      agentId: attestation.agentId,
+      identityVerified: attestation.identityVerified,
+    };
+
+    audit.log("PERMISSION_REQUEST", {
+      permission: req,
+      meta: enrichedMeta,
+    });
+
+    // If attestation failed and registry is not empty → deny immediately
+    if (attestation.denyReason) {
+      const entry = enrichAuditEntry(
+        {
+          id: "",
+          timestamp: "",
+          event: "POLICY_DENY",
+          prev_hash: "",
+          permission: req,
+          verdict: "deny",
+        },
+        attestation
+      );
+
+      audit.log("POLICY_DENY", {
+        permission: req,
+        verdict: "deny",
+        meta: {
+          attestation_deny: attestation.denyReason,
+          agentId: attestation.agentId,
+          identityVerified: false,
+          agentRole: attestation.role,
+          attestationDenyReason: attestation.denyReason,
+        },
+      });
+
+      await telegram
+        .sendReply(
+          `🚫 <b>IDENTITY DENIED</b> by Fidelis attestation:\n` +
+            `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
+            `Agent: <code>${escapeHtml(attestation.agentId)}</code>\n` +
+            `Reason: ${escapeHtml(attestation.denyReason)}`,
+          { broadcast: true }
+        )
+        .catch(() => {});
+
+      sendVerdict(mcp, req.request_id, "deny");
+      return;
+    }
+
+    // --- Step 2: Policy evaluation ------------------------------------------
     const policyResult: PolicyResult = policyEngine.evaluate(req);
     if (policyResult.anomaly_flags.length > 0) {
       audit.log("ANOMALY_DETECTED", {
         permission: req,
         policy_result: policyResult,
-        meta: { flags: policyResult.anomaly_flags },
+        meta: { flags: policyResult.anomaly_flags, ...enrichedMeta },
       });
     }
+
+    // Build identity meta to attach to all audit entries
+    const identityMeta = {
+      agentId: attestation.agentId,
+      identityVerified: attestation.identityVerified,
+      agentRole: attestation.role,
+      credentialExpiry: attestation.credentialExpiry,
+    };
 
     if (policyResult.verdict === "deny") {
       audit.log("POLICY_DENY", {
         permission: req,
         policy_result: policyResult,
         verdict: "deny",
+        meta: identityMeta,
       });
 
       const reason = policyResult.matched_rule?.reason || "Policy rule match";
@@ -314,6 +520,7 @@ async function main(): Promise<void> {
         .sendReply(
           `🚫 <b>AUTO-DENIED</b> by Fidelis policy:\n` +
             `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
+            `Agent: <code>${escapeHtml(attestation.agentId)}</code>\n` +
             `Reason: ${escapeHtml(reason)}${mitreTag}${sensitivityInfo}`,
           { broadcast: true }
         )
@@ -328,13 +535,14 @@ async function main(): Promise<void> {
         permission: req,
         policy_result: policyResult,
         verdict: "allow",
+        meta: identityMeta,
       });
 
       sendVerdict(mcp, req.request_id, "allow");
       return;
     }
 
-    // Build combined flags: anomaly flags + sensitivity annotations for Telegram prompt
+    // --- Step 3: Forward to Telegram for human verdict ---------------------
     const promptFlags = [...policyResult.anomaly_flags];
     if (policyResult.sensitivity_matches.length > 0) {
       for (const sm of policyResult.sensitivity_matches) {
@@ -356,7 +564,7 @@ async function main(): Promise<void> {
         permission: req,
         policy_result: policyResult,
         verdict: "allow",
-        meta: { responder_chat_id: outcome.responder_chat_id },
+        meta: { responder_chat_id: outcome.responder_chat_id, ...identityMeta },
       });
       sendVerdict(mcp, req.request_id, "allow");
       return;
@@ -367,7 +575,7 @@ async function main(): Promise<void> {
         permission: req,
         policy_result: policyResult,
         verdict: "deny",
-        meta: { responder_chat_id: outcome.responder_chat_id },
+        meta: { responder_chat_id: outcome.responder_chat_id, ...identityMeta },
       });
       sendVerdict(mcp, req.request_id, "deny");
       return;
@@ -378,6 +586,7 @@ async function main(): Promise<void> {
       policy_result: policyResult,
       verdict: "deny",
       meta: {
+        ...identityMeta,
         reason:
           config.telegram_allowed_chat_ids.length === 0
             ? "No authorized Telegram chat configured"
@@ -386,6 +595,10 @@ async function main(): Promise<void> {
     });
     sendVerdict(mcp, req.request_id, "deny");
   });
+
+  // =========================================================================
+  // Telegram message bridge
+  // =========================================================================
 
   telegram.onMessage((msg) => {
     audit.log("CHANNEL_MESSAGE", {
@@ -416,6 +629,10 @@ async function main(): Promise<void> {
       });
   });
 
+  // =========================================================================
+  // Start
+  // =========================================================================
+
   await telegram.start();
 
   const transport = new StdioServerTransport();
@@ -430,6 +647,7 @@ async function main(): Promise<void> {
   console.error(`[fidelis] Timeout: ${config.permission_timeout_seconds}s (fail-closed)`);
   console.error(`[fidelis] Audit log: ${config.audit_log_path} (SHA3-256 chain)`);
   console.error(`[fidelis] ML-DSA-65 signing: ${signer.available ? `active (key: ${signer.getPublicKeyHash()?.slice(0, 16)}...)` : "unavailable"}`);
+  console.error(`[fidelis] Agent registry: ${registry.size} credentials (${registry.isEmpty() ? "bootstrap mode" : "active"})`);
   console.error(`[fidelis] Identity: ${identityContext.loaded ? `${identityContext.principal_label} (Tier ${identityContext.max_tier_present})` : "standalone (no briefcase)"}`);
 }
 
