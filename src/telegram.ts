@@ -195,7 +195,7 @@ export class TelegramBot {
 
   async sendMessage(chatId: number, text: string, parseMode = "HTML"): Promise<void> {
     const url = `${this.baseUrl}/sendMessage`;
-    await fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -205,6 +205,15 @@ export class TelegramBot {
       }),
       signal: AbortSignal.timeout(10_000),
     });
+
+    if (!res.ok) {
+      throw new Error(`Telegram HTTP ${res.status} ${res.statusText}`);
+    }
+
+    const data = (await res.json()) as TelegramResponse<{ message_id: number }>;
+    if (!data.ok) {
+      throw new Error(`Telegram API error: ${data.description || "unknown error"}`);
+    }
   }
 
   async requestVerdict(
@@ -239,10 +248,19 @@ export class TelegramBot {
       return { decision: "timeout" };
     }
 
+    let delivered = 0;
     for (const chatId of chatIds) {
-      await this.sendMessage(chatId, prompt).catch((err) => {
+      try {
+        await this.sendMessage(chatId, prompt);
+        delivered += 1;
+      } catch (err) {
         console.error(`[fidelis-telegram] Failed to send to chat ${chatId}:`, err);
-      });
+      }
+    }
+
+    if (delivered === 0) {
+      console.error("[fidelis-telegram] Permission prompt could not be delivered to any authorized chat — auto-deny");
+      return { decision: "timeout" };
     }
 
     return new Promise<VerdictOutcome>((resolve) => {

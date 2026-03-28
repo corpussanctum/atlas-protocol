@@ -1,9 +1,16 @@
 /**
  * Fidelis Channel — Audit Log
  *
- * Append-only JSONL log with HMAC-SHA256 signatures and hash chaining.
- * Each entry includes a hash of the previous entry, creating a tamper-evident chain.
- * If no HMAC secret is configured, entries are still chained but unsigned.
+ * Append-only JSONL log with:
+ *   - SHA-256 hash chaining (tamper-evident)
+ *   - Optional HMAC-SHA256 signatures
+ *   - Consent-tier-driven field redaction (hashes PHI fields instead of storing plaintext)
+ *
+ * Redaction strategy:
+ *   - If an IdentityContext is loaded with audit_redact_fields, those fields are
+ *     automatically hashed in permission entries (e.g. input_preview → HASHED:sha256(...))
+ *   - If FIDELIS_PRIVACY_MODE=true, input_preview is always redacted regardless of context
+ *   - The hash allows after-the-fact verification without storing PHI on disk
  */
 
 import { createHmac, createHash, randomUUID } from "node:crypto";
@@ -17,36 +24,39 @@ import type { PolicyResult, PermissionRequest } from "./policy-engine.js";
 // ---------------------------------------------------------------------------
 
 export type AuditEventType =
-  | "PERMISSION_REQUEST"     // A permission was requested by Claude Code
-  | "POLICY_DENY"            // Policy engine auto-denied
-  | "POLICY_ALLOW"           // Policy engine auto-allowed
-  | "HUMAN_APPROVE"          // Human approved via Telegram
-  | "HUMAN_DENY"             // Human denied via Telegram
-  | "TIMEOUT_DENY"           // No response within timeout → fail-closed deny
-  | "ANOMALY_DETECTED"       // Anomaly flag raised
-  | "CHANNEL_MESSAGE"        // Inbound channel message from Telegram
-  | "SESSION_START"          // Plugin started
-  | "CONFIG_LOADED";         // Configuration loaded
+  | "PERMISSION_REQUEST"
+  | "POLICY_DENY"
+  | "POLICY_ALLOW"
+  | "HUMAN_APPROVE"
+  | "HUMAN_DENY"
+  | "TIMEOUT_DENY"
+  | "ANOMALY_DETECTED"
+  | "CHANNEL_MESSAGE"
+  | "SESSION_START"
+  | "CONFIG_LOADED"
+  | "IDENTITY_LOADED";
 
 export interface AuditEntry {
-  /** Unique entry ID */
   id: string;
-  /** ISO 8601 timestamp */
   timestamp: string;
-  /** Event type */
   event: AuditEventType;
-  /** Permission request details (if applicable) */
   permission?: PermissionRequest;
-  /** Policy evaluation result (if applicable) */
   policy_result?: PolicyResult;
-  /** Final behavior sent to Claude Code */
   verdict?: "allow" | "deny";
-  /** Free-form metadata */
   meta?: Record<string, unknown>;
-  /** SHA-256 hash of the previous entry (chain link) */
   prev_hash: string;
-  /** HMAC-SHA256 signature of this entry (excluding the hmac field itself) */
   hmac?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Redaction config
+// ---------------------------------------------------------------------------
+
+export interface RedactionConfig {
+  /** Fields on the permission object to hash instead of storing plaintext */
+  redact_fields: string[];
+  /** Whether privacy mode is forced (overrides identity context) */
+  force_privacy: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,24 +67,36 @@ export class AuditLogger {
   private readonly logPath: string;
   private readonly hmacSecret: string;
   private prevHash: string;
+  private redaction: RedactionConfig;
 
-  constructor(config: FidelisConfig) {
+  constructor(config: FidelisConfig, redaction?: RedactionConfig) {
     this.logPath = config.audit_log_path;
     this.hmacSecret = config.audit_hmac_secret;
 
-    // Ensure log directory exists
+    // Redaction: merge forced privacy mode with identity-driven config
+    const forcePrivacy = process.env.FIDELIS_PRIVACY_MODE === "true";
+    this.redaction = redaction ?? {
+      redact_fields: forcePrivacy ? ["input_preview"] : [],
+      force_privacy: forcePrivacy,
+    };
+
     const dir = dirname(this.logPath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
 
-    // Initialize chain from last entry in existing log
     this.prevHash = this.getLastHash();
   }
 
   /**
+   * Update redaction config (e.g. after loading identity context).
+   */
+  setRedaction(redaction: RedactionConfig): void {
+    this.redaction = redaction;
+  }
+
+  /**
    * Read the last line of the audit log to get the chain hash.
-   * Returns "GENESIS" if the log is empty or doesn't exist.
    */
   private getLastHash(): string {
     if (!existsSync(this.logPath)) {
@@ -85,7 +107,6 @@ export class AuditLogger {
       if (!content) return "GENESIS";
       const lines = content.split("\n");
       const lastLine = lines[lines.length - 1];
-      // Hash the entire last entry to form the chain
       return createHash("sha256").update(lastLine).digest("hex");
     } catch {
       return "GENESIS";
@@ -93,7 +114,7 @@ export class AuditLogger {
   }
 
   /**
-   * Append an audit entry to the log.
+   * Append an audit entry to the log with optional field redaction.
    */
   log(
     event: AuditEventType,
@@ -111,6 +132,15 @@ export class AuditLogger {
       prev_hash: this.prevHash,
       ...options,
     };
+
+    // Apply field redaction to permission object
+    if (entry.permission && this.redaction.redact_fields.length > 0) {
+      entry.permission = this.redactPermission(entry.permission);
+      entry.meta = {
+        ...entry.meta,
+        redacted_fields: this.redaction.redact_fields,
+      };
+    }
 
     // Compute HMAC if secret is configured
     if (this.hmacSecret) {
@@ -131,14 +161,36 @@ export class AuditLogger {
   }
 
   /**
+   * Redact specified fields on a PermissionRequest by replacing them
+   * with HASHED:sha256(...). The hash allows verification without
+   * storing the original value on disk.
+   */
+  private redactPermission(perm: PermissionRequest): PermissionRequest {
+    const redacted = { ...perm };
+
+    for (const field of this.redaction.redact_fields) {
+      if (field in redacted) {
+        const key = field as keyof PermissionRequest;
+        const original = redacted[key];
+        if (typeof original === "string" && original.length > 0) {
+          const hash = createHash("sha256").update(original).digest("hex");
+          // TypeScript: we know these fields are strings on PermissionRequest
+          (redacted as Record<string, string>)[key] = `HASHED:${hash}`;
+        }
+      }
+    }
+
+    return redacted;
+  }
+
+  /**
    * Verify the integrity of the entire audit log.
-   * Returns true if the chain is intact and all HMACs are valid.
    */
   verify(): { valid: boolean; errors: string[] } {
     const errors: string[] = [];
 
     if (!existsSync(this.logPath)) {
-      return { valid: true, errors: [] }; // Empty log is valid
+      return { valid: true, errors: [] };
     }
 
     const content = readFileSync(this.logPath, "utf-8").trim();
@@ -151,14 +203,12 @@ export class AuditLogger {
       try {
         const entry: AuditEntry = JSON.parse(lines[i]);
 
-        // Verify chain hash
         if (entry.prev_hash !== expectedPrevHash) {
           errors.push(
             `Line ${i + 1}: chain broken — expected prev_hash ${expectedPrevHash.slice(0, 12)}..., got ${entry.prev_hash.slice(0, 12)}...`
           );
         }
 
-        // Verify HMAC if present and secret is available
         if (entry.hmac && this.hmacSecret) {
           const { hmac, ...rest } = entry;
           const expectedHmac = createHmac("sha256", this.hmacSecret)
@@ -169,7 +219,6 @@ export class AuditLogger {
           }
         }
 
-        // Compute hash for next link
         expectedPrevHash = createHash("sha256").update(lines[i]).digest("hex");
       } catch {
         errors.push(`Line ${i + 1}: invalid JSON`);

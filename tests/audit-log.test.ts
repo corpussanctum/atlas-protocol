@@ -1,5 +1,8 @@
 /**
- * Tests for Fidelis Channel — Audit Log
+ * Tests for Fidelis Channel — Audit Log (v0.2.1)
+ *
+ * Covers: basic logging, hash chain, HMAC signing, verification,
+ * and consent-tier-driven field redaction.
  */
 
 import { describe, it, afterEach } from "node:test";
@@ -26,6 +29,8 @@ function makeTempDir(): string {
 function makeConfig(overrides: Partial<FidelisConfig> = {}): FidelisConfig {
   const dir = makeTempDir();
   return {
+    data_dir: dir,
+    config_path: join(dir, "config.json"),
     telegram_bot_token: "",
     telegram_allowed_chat_ids: [],
     telegram_poll_interval_ms: 1000,
@@ -34,6 +39,7 @@ function makeConfig(overrides: Partial<FidelisConfig> = {}): FidelisConfig {
     audit_log_path: join(dir, "audit.jsonl"),
     audit_hmac_secret: "",
     velocity_limit_per_minute: 30,
+    briefcase_path: "",
     ...overrides,
   };
 }
@@ -69,14 +75,14 @@ describe("AuditLogger — basic logging", () => {
     const config = makeConfig();
     const logger = new AuditLogger(config);
     const entry = logger.log("SESSION_START", {
-      meta: { version: "0.1.0" },
+      meta: { version: "0.2.1" },
     });
 
     assert.ok(entry.id, "Entry should have an id");
     assert.ok(entry.timestamp, "Entry should have a timestamp");
     assert.equal(entry.event, "SESSION_START");
     assert.equal(typeof entry.prev_hash, "string");
-    assert.deepEqual(entry.meta, { version: "0.1.0" });
+    assert.deepEqual(entry.meta, { version: "0.2.1" });
   });
 
   it("entries include permission and policy_result when provided", () => {
@@ -93,6 +99,8 @@ describe("AuditLogger — basic logging", () => {
         verdict: "deny",
         matched_rule: { tool_pattern: "Bash(rm -rf *)", action: "deny" },
         anomaly_flags: [],
+        sensitivity_matches: [],
+        identity_evaluated: false,
       },
       verdict: "deny",
     });
@@ -141,16 +149,13 @@ describe("AuditLogger — hash chain", () => {
     const lines = readFileSync(config.audit_log_path, "utf-8").trim().split("\n");
     assert.equal(lines.length, 3);
 
-    // First entry: prev_hash should be GENESIS
     const entry0 = JSON.parse(lines[0]);
     assert.equal(entry0.prev_hash, "GENESIS");
 
-    // Second entry: prev_hash should be SHA-256 of first line
     const entry1 = JSON.parse(lines[1]);
     const expectedHash1 = createHash("sha256").update(lines[0]).digest("hex");
     assert.equal(entry1.prev_hash, expectedHash1);
 
-    // Third entry: prev_hash should be SHA-256 of second line
     const entry2 = JSON.parse(lines[2]);
     const expectedHash2 = createHash("sha256").update(lines[1]).digest("hex");
     assert.equal(entry2.prev_hash, expectedHash2);
@@ -161,7 +166,6 @@ describe("AuditLogger — hash chain", () => {
     const logger1 = new AuditLogger(config);
     logger1.log("SESSION_START");
 
-    // Create a new logger pointing at the same log
     const logger2 = new AuditLogger(config);
     logger2.log("CONFIG_LOADED");
 
@@ -215,14 +219,12 @@ describe("AuditLogger — HMAC signing", () => {
     const logger = new AuditLogger(config);
     logger.log("SESSION_START");
 
-    // Read, tamper, rewrite
     const line = readFileSync(config.audit_log_path, "utf-8").trim();
     const entry = JSON.parse(line);
-    entry.event = "HUMAN_APPROVE"; // tamper the event type
+    entry.event = "HUMAN_APPROVE";
     const tampered = JSON.stringify(entry);
     writeFileSync(config.audit_log_path, tampered + "\n", "utf-8");
 
-    // Verify should detect the tamper
     const verifyResult = logger.verify();
     assert.equal(verifyResult.valid, false);
     assert.ok(
@@ -240,7 +242,6 @@ describe("AuditLogger — verify()", () => {
   it("returns valid for an empty/missing log", () => {
     const config = makeConfig();
     const logger = new AuditLogger(config);
-    // Don't write anything
     const result = logger.verify();
     assert.equal(result.valid, true);
     assert.equal(result.errors.length, 0);
@@ -266,16 +267,12 @@ describe("AuditLogger — verify()", () => {
     logger.log("CONFIG_LOADED");
     logger.log("PERMISSION_REQUEST");
 
-    // Remove the middle line to break the chain
     const lines = readFileSync(config.audit_log_path, "utf-8").trim().split("\n");
     writeFileSync(config.audit_log_path, lines[0] + "\n" + lines[2] + "\n", "utf-8");
 
     const result = logger.verify();
     assert.equal(result.valid, false);
-    assert.ok(
-      result.errors.some((e) => e.includes("chain broken")),
-      `Expected chain broken error, got: ${result.errors.join(", ")}`
-    );
+    assert.ok(result.errors.some((e) => e.includes("chain broken")));
   });
 
   it("detects tampered HMAC in verification", () => {
@@ -284,18 +281,14 @@ describe("AuditLogger — verify()", () => {
     const logger = new AuditLogger(config);
     logger.log("SESSION_START");
 
-    // Tamper the HMAC directly
     const line = readFileSync(config.audit_log_path, "utf-8").trim();
     const entry = JSON.parse(line);
-    entry.hmac = "0".repeat(64); // fake HMAC
+    entry.hmac = "0".repeat(64);
     writeFileSync(config.audit_log_path, JSON.stringify(entry) + "\n", "utf-8");
 
     const result = logger.verify();
     assert.equal(result.valid, false);
-    assert.ok(
-      result.errors.some((e) => e.includes("HMAC mismatch")),
-      `Expected HMAC mismatch, got: ${result.errors.join(", ")}`
-    );
+    assert.ok(result.errors.some((e) => e.includes("HMAC mismatch")));
   });
 
   it("detects invalid JSON in log", () => {
@@ -303,12 +296,160 @@ describe("AuditLogger — verify()", () => {
     const logger = new AuditLogger(config);
     logger.log("SESSION_START");
 
-    // Append garbage
     const existing = readFileSync(config.audit_log_path, "utf-8");
     writeFileSync(config.audit_log_path, existing + "not-valid-json\n", "utf-8");
 
     const result = logger.verify();
     assert.equal(result.valid, false);
     assert.ok(result.errors.some((e) => e.includes("invalid JSON")));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Field redaction
+// ---------------------------------------------------------------------------
+
+describe("AuditLogger — field redaction", () => {
+  it("does not redact when redact_fields is empty", () => {
+    const config = makeConfig();
+    const logger = new AuditLogger(config, {
+      redact_fields: [],
+      force_privacy: false,
+    });
+
+    const entry = logger.log("PERMISSION_REQUEST", {
+      permission: {
+        request_id: "req-1",
+        tool_name: "Bash",
+        description: "run a command",
+        input_preview: "echo secret data SSN 123-45-6789",
+      },
+    });
+
+    assert.equal(entry.permission?.input_preview, "echo secret data SSN 123-45-6789");
+  });
+
+  it("hashes input_preview when redact_fields includes it", () => {
+    const config = makeConfig();
+    const logger = new AuditLogger(config, {
+      redact_fields: ["input_preview"],
+      force_privacy: false,
+    });
+
+    const rawInput = "echo secret data SSN 123-45-6789";
+    const entry = logger.log("PERMISSION_REQUEST", {
+      permission: {
+        request_id: "req-1",
+        tool_name: "Bash",
+        description: "run a command",
+        input_preview: rawInput,
+      },
+    });
+
+    // Should be hashed, not plaintext
+    assert.ok(entry.permission?.input_preview.startsWith("HASHED:"));
+    assert.ok(!entry.permission?.input_preview.includes("secret"));
+    assert.ok(!entry.permission?.input_preview.includes("123-45-6789"));
+
+    // Should be verifiable
+    const expectedHash = createHash("sha256").update(rawInput).digest("hex");
+    assert.equal(entry.permission?.input_preview, `HASHED:${expectedHash}`);
+
+    // Meta should note the redaction
+    assert.deepEqual(entry.meta?.redacted_fields, ["input_preview"]);
+  });
+
+  it("preserves non-redacted fields", () => {
+    const config = makeConfig();
+    const logger = new AuditLogger(config, {
+      redact_fields: ["input_preview"],
+      force_privacy: false,
+    });
+
+    const entry = logger.log("PERMISSION_REQUEST", {
+      permission: {
+        request_id: "req-1",
+        tool_name: "Bash",
+        description: "run a command",
+        input_preview: "sensitive stuff",
+      },
+    });
+
+    // tool_name, description, request_id should remain plaintext
+    assert.equal(entry.permission?.tool_name, "Bash");
+    assert.equal(entry.permission?.description, "run a command");
+    assert.equal(entry.permission?.request_id, "req-1");
+  });
+
+  it("can redact multiple fields", () => {
+    const config = makeConfig();
+    const logger = new AuditLogger(config, {
+      redact_fields: ["input_preview", "description"],
+      force_privacy: false,
+    });
+
+    const entry = logger.log("PERMISSION_REQUEST", {
+      permission: {
+        request_id: "req-1",
+        tool_name: "Bash",
+        description: "patient diagnosis F32.1",
+        input_preview: "SSN 123-45-6789",
+      },
+    });
+
+    assert.ok(entry.permission?.input_preview.startsWith("HASHED:"));
+    assert.ok(entry.permission?.description.startsWith("HASHED:"));
+    assert.equal(entry.permission?.tool_name, "Bash"); // not redacted
+  });
+
+  it("redaction can be updated after construction", () => {
+    const config = makeConfig();
+    const logger = new AuditLogger(config);
+
+    // Initially no redaction
+    const entry1 = logger.log("PERMISSION_REQUEST", {
+      permission: {
+        request_id: "req-1",
+        tool_name: "Bash",
+        description: "test",
+        input_preview: "plaintext data",
+      },
+    });
+    assert.equal(entry1.permission?.input_preview, "plaintext data");
+
+    // Enable redaction
+    logger.setRedaction({ redact_fields: ["input_preview"], force_privacy: true });
+
+    const entry2 = logger.log("PERMISSION_REQUEST", {
+      permission: {
+        request_id: "req-2",
+        tool_name: "Bash",
+        description: "test",
+        input_preview: "should be hashed",
+      },
+    });
+    assert.ok(entry2.permission?.input_preview.startsWith("HASHED:"));
+  });
+
+  it("redacted entries still maintain valid hash chain", () => {
+    const config = makeConfig({ audit_hmac_secret: "redaction-chain-test" });
+    const logger = new AuditLogger(config, {
+      redact_fields: ["input_preview"],
+      force_privacy: true,
+    });
+
+    logger.log("SESSION_START");
+    logger.log("PERMISSION_REQUEST", {
+      permission: {
+        request_id: "req-1",
+        tool_name: "Bash",
+        description: "test",
+        input_preview: "sensitive data here",
+      },
+    });
+    logger.log("POLICY_ALLOW", { verdict: "allow" });
+
+    const result = logger.verify();
+    assert.equal(result.valid, true, `Errors: ${result.errors.join(", ")}`);
   });
 });

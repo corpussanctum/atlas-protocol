@@ -1,6 +1,6 @@
 {
   "name": "fidelis-channel",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Telegram approval channel for Claude Code with fail-closed permission relay, policy rules, and tamper-evident audit logging.",
   "type": "module",
   "main": "dist/index.js",
@@ -9,9 +9,10 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:test": "tsc -p tsconfig.tests.json",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "npm run build:test && node --test .test-dist/tests/*.test.js"
   },
   "keywords": [
     "claude-code",
@@ -30,7 +31,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "tsx": "^4.21.0",
     "typescript": "^5.7.0"
   },
   "engines": {

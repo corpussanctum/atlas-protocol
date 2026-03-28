@@ -55,6 +55,10 @@ export interface FidelisConfig {
   // -- Anomaly detection ------------------------------------------------------
   /** Max permission requests per minute before triggering a velocity alert */
   velocity_limit_per_minute: number;
+
+  // -- Identity / Briefcase -------------------------------------------------
+  /** Path to a DIB Briefcase directory. Empty = standalone mode. */
+  briefcase_path: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +118,7 @@ function buildDefaults(): FidelisConfig {
     audit_log_path: defaultAuditPath(dataDir),
     audit_hmac_secret: "",
     velocity_limit_per_minute: 30,
+    briefcase_path: "",
   };
 }
 
@@ -153,6 +158,9 @@ export function loadConfig(): FidelisConfig {
   }
   if (process.env.FIDELIS_POLL_INTERVAL_MS) {
     config.telegram_poll_interval_ms = parseInt(process.env.FIDELIS_POLL_INTERVAL_MS, 10) || 1000;
+  }
+  if (process.env.FIDELIS_BRIEFCASE_PATH) {
+    config.briefcase_path = process.env.FIDELIS_BRIEFCASE_PATH;
   }
 
   return config;

@@ -5,3 +5,4 @@ dist/
 .env
 audit.jsonl
 .claude/
+.test-dist/

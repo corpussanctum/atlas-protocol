@@ -22,8 +22,10 @@ import { PolicyEngine } from "./policy-engine.js";
 import type { PermissionRequest, PolicyResult } from "./policy-engine.js";
 import { AuditLogger } from "./audit-log.js";
 import { TelegramBot } from "./telegram.js";
+import { createIdentityProvider } from "./identity-provider.js";
+import type { IdentityContext } from "./identity-provider.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.2";
 
 const PermissionRequestSchema = z.object({
   method: z.literal("notifications/claude/channel/permission_request"),
@@ -36,8 +38,17 @@ const PermissionRequestSchema = z.object({
 });
 
 const config = loadConfig();
-const policyEngine = new PolicyEngine(config);
-const audit = new AuditLogger(config);
+const identityProvider = createIdentityProvider(config.briefcase_path || undefined);
+const identityContext = identityProvider.getContext();
+const policyEngine = new PolicyEngine(config, identityContext);
+const audit = new AuditLogger(config, {
+  redact_fields: identityContext.loaded
+    ? identityContext.audit_redact_fields
+    : process.env.FIDELIS_PRIVACY_MODE === "true"
+      ? ["input_preview"]
+      : [],
+  force_privacy: process.env.FIDELIS_PRIVACY_MODE === "true",
+});
 const telegram = new TelegramBot(config);
 
 audit.log("SESSION_START", {
@@ -48,6 +59,10 @@ audit.log("SESSION_START", {
     policy_rules: config.policy_rules.length,
     hmac_enabled: !!config.audit_hmac_secret,
     data_dir: config.data_dir,
+    identity_loaded: identityContext.loaded,
+    identity_principal: identityContext.principal_label || null,
+    identity_max_tier: identityContext.loaded ? identityContext.max_tier_present : null,
+    briefcase_path: config.briefcase_path || null,
   },
 });
 audit.log("CONFIG_LOADED", {
@@ -58,6 +73,18 @@ audit.log("CONFIG_LOADED", {
     config_path: config.config_path,
   },
 });
+if (identityContext.loaded) {
+  audit.log("IDENTITY_LOADED", {
+    meta: {
+      principal: identityContext.principal_label,
+      max_tier: identityContext.max_tier_present,
+      consent_boundaries: identityContext.consent_boundaries.length,
+      agent_authorizations: identityContext.agent_authorizations.length,
+      sensitivity_classifications: identityContext.sensitivity_classifications.length,
+      audit_redact_fields: identityContext.audit_redact_fields,
+    },
+  });
+}
 
 const mcp = new Server(
   {
@@ -103,6 +130,10 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "boolean",
             description: "Set true to send to all authorized chats",
           },
+          raw_html: {
+            type: "boolean",
+            description: "Set true to send message as trusted Telegram HTML. Default is false and content is escaped.",
+          },
         },
         required: ["message"],
       },
@@ -136,6 +167,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
       const message = (args?.message as string) || "";
       const chatId = typeof args?.chat_id === "number" ? args.chat_id : undefined;
       const broadcast = Boolean(args?.broadcast);
+      const rawHtml = Boolean(args?.raw_html);
 
       if (!message) {
         return {
@@ -145,7 +177,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       try {
-        await telegram.sendReply(`💬 <b>Claude:</b>\n${message}`, {
+        const renderedMessage = rawHtml ? message : escapeHtml(message);
+        await telegram.sendReply(`💬 <b>Claude:</b>
+${renderedMessage}`, {
           chatId,
           broadcast,
         });
@@ -186,6 +220,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
         hmac_signing_enabled: !!config.audit_hmac_secret,
         audit_log_path: config.audit_log_path,
         data_dir: config.data_dir,
+        identity: {
+          loaded: identityContext.loaded,
+          principal: identityContext.principal_label || null,
+          max_consent_tier: identityContext.loaded ? identityContext.max_tier_present : null,
+          consent_boundaries: identityContext.consent_boundaries.length,
+          sensitivity_classifications: identityContext.sensitivity_classifications.length,
+          audit_redact_fields: identityContext.audit_redact_fields,
+          briefcase_path: config.briefcase_path || null,
+        },
       };
       return {
         content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }],
@@ -227,11 +270,14 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
     });
 
     const reason = policyResult.matched_rule?.reason || "Policy rule match";
+    const sensitivityInfo = policyResult.sensitivity_matches.length > 0
+      ? `\nData: ${policyResult.sensitivity_matches.map((s) => s.data_type).join(", ")}`
+      : "";
     await telegram
       .sendReply(
         `🚫 <b>AUTO-DENIED</b> by Fidelis policy:\n` +
           `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
-          `Reason: ${escapeHtml(reason)}`,
+          `Reason: ${escapeHtml(reason)}${sensitivityInfo}`,
         { broadcast: true }
       )
       .catch(() => {});
@@ -251,12 +297,20 @@ mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
     return;
   }
 
+  // Build combined flags: anomaly flags + sensitivity annotations for Telegram prompt
+  const promptFlags = [...policyResult.anomaly_flags];
+  if (policyResult.sensitivity_matches.length > 0) {
+    for (const sm of policyResult.sensitivity_matches) {
+      promptFlags.push(`📋 ${sm.data_type} detected (requires consent Tier ${sm.min_tier}+)`);
+    }
+  }
+
   const outcome = await telegram.requestVerdict(
     req.request_id,
     req.tool_name,
     req.description,
     req.input_preview,
-    policyResult.anomaly_flags,
+    promptFlags,
     config.permission_timeout_seconds
   );
 
@@ -361,6 +415,7 @@ async function main(): Promise<void> {
   console.error(`[fidelis] Policy rules: ${config.policy_rules.length}`);
   console.error(`[fidelis] Timeout: ${config.permission_timeout_seconds}s (fail-closed)`);
   console.error(`[fidelis] Audit log: ${config.audit_log_path}`);
+  console.error(`[fidelis] Identity: ${identityContext.loaded ? `${identityContext.principal_label} (Tier ${identityContext.max_tier_present})` : "standalone (no briefcase)"}`);
 }
 
 main().catch((err) => {
