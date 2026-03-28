@@ -1,13 +1,38 @@
 {
-  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "fidelis-channel",
-  "description": "Fiduciary-grade Telegram security layer for Claude Code. Fail-closed permission relay with policy engine, HMAC-signed audit trail, and anomaly detection. Part of the Fidelis Protocol.",
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "Telegram approval channel for Claude Code with fail-closed permission relay, policy rules, and tamper-evident audit logging.",
   "author": {
     "name": "TJ Lane — Corpus Sanctum Inc.",
     "email": "tj@corpussanctum.ai"
   },
-  "category": "security",
-  "homepage": "https://github.com/corpussanctum/fidelis-channel",
-  "source": "."
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude-code",
+    "telegram",
+    "channels",
+    "security",
+    "audit"
+  ],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "channels": [
+    {
+      "server": "fidelis-channel",
+      "userConfig": {
+        "bot_token": {
+          "description": "Telegram bot token from @BotFather",
+          "sensitive": true
+        },
+        "owner_chat_ids": {
+          "description": "Comma-separated Telegram chat IDs allowed to send messages and approve requests",
+          "sensitive": false
+        },
+        "audit_hmac_secret": {
+          "description": "Optional HMAC secret for signing audit entries. Leave blank to use hash chaining only.",
+          "sensitive": true
+        }
+      }
+    }
+  ]
 }

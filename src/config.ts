@@ -2,7 +2,8 @@
  * Fidelis Channel — Configuration
  *
  * Loads config from environment variables and/or a JSON config file.
- * All settings have safe defaults (fail-closed).
+ * Defaults are conservative: no bot token, no authorized chats, and a fail-closed
+ * permission timeout.
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -23,6 +24,12 @@ export interface PolicyRule {
 }
 
 export interface FidelisConfig {
+  // -- Paths -----------------------------------------------------------------
+  /** Persistent state directory for config/audit artifacts */
+  data_dir: string;
+  /** Optional JSON config file path */
+  config_path: string;
+
   // -- Telegram ---------------------------------------------------------------
   /** Telegram bot token from @BotFather */
   telegram_bot_token: string;
@@ -54,66 +61,83 @@ export interface FidelisConfig {
 // Defaults
 // ---------------------------------------------------------------------------
 
-const CONFIG_DIR = join(homedir(), ".fidelis-channel");
-const DEFAULT_AUDIT_PATH = join(CONFIG_DIR, "audit.jsonl");
+function resolveDataDir(): string {
+  return (
+    process.env.FIDELIS_DATA_DIR ||
+    process.env.CLAUDE_PLUGIN_DATA ||
+    join(homedir(), ".fidelis-channel")
+  );
+}
 
-const DEFAULTS: FidelisConfig = {
-  telegram_bot_token: "",
-  telegram_allowed_chat_ids: [],
-  telegram_poll_interval_ms: 1000,
-  permission_timeout_seconds: 120,
-  policy_rules: [
-    // Default policy: block known-dangerous patterns, ask for everything else
-    {
-      tool_pattern: "Bash(rm -rf *)",
-      action: "deny",
-      reason: "Recursive force-delete blocked by Fidelis policy",
-    },
-    {
-      tool_pattern: "Bash(*--skip-verification*)",
-      action: "deny",
-      reason: "Safety bypass flags blocked by Fidelis policy",
-    },
-    {
-      tool_pattern: "Bash(*curl*|*wget*|*nc *|*netcat*)",
-      action: "deny",
-      reason: "Network exfiltration tool blocked by Fidelis policy",
-    },
-  ],
-  audit_log_path: DEFAULT_AUDIT_PATH,
-  audit_hmac_secret: "",
-  velocity_limit_per_minute: 30,
-};
+function defaultConfigPath(dataDir: string): string {
+  return process.env.FIDELIS_CONFIG_PATH || join(dataDir, "config.json");
+}
+
+function defaultAuditPath(dataDir: string): string {
+  return join(dataDir, "audit.jsonl");
+}
+
+function parseChatIds(value: string): number[] {
+  return value
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => !Number.isNaN(n));
+}
+
+function buildDefaults(): FidelisConfig {
+  const dataDir = resolveDataDir();
+
+  return {
+    data_dir: dataDir,
+    config_path: defaultConfigPath(dataDir),
+    telegram_bot_token: "",
+    telegram_allowed_chat_ids: [],
+    telegram_poll_interval_ms: 1000,
+    permission_timeout_seconds: 120,
+    policy_rules: [
+      {
+        tool_pattern: "Bash(rm -rf *)",
+        action: "deny",
+        reason: "Recursive force-delete blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*--skip-verification*)",
+        action: "deny",
+        reason: "Safety bypass flags blocked by Fidelis policy",
+      },
+      {
+        tool_pattern: "Bash(*curl*|*wget*|*nc *|*netcat*)",
+        action: "deny",
+        reason: "Network exfiltration tool blocked by Fidelis policy",
+      },
+    ],
+    audit_log_path: defaultAuditPath(dataDir),
+    audit_hmac_secret: "",
+    velocity_limit_per_minute: 30,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Loader
 // ---------------------------------------------------------------------------
 
 export function loadConfig(): FidelisConfig {
-  // Start from defaults
-  const config: FidelisConfig = { ...DEFAULTS, policy_rules: [...DEFAULTS.policy_rules] };
+  const config = buildDefaults();
 
-  // Try loading JSON config file
-  const configPath = join(CONFIG_DIR, "config.json");
-  if (existsSync(configPath)) {
+  if (existsSync(config.config_path)) {
     try {
-      const raw = JSON.parse(readFileSync(configPath, "utf-8"));
+      const raw = JSON.parse(readFileSync(config.config_path, "utf-8")) as Partial<FidelisConfig>;
       Object.assign(config, raw);
     } catch {
-      // Silently fall back to defaults — logged in audit
-      console.error(`[fidelis] Warning: could not parse ${configPath}, using defaults`);
+      console.error(`[fidelis] Warning: could not parse ${config.config_path}, using defaults`);
     }
   }
 
-  // Environment overrides (highest priority)
   if (process.env.FIDELIS_TELEGRAM_BOT_TOKEN) {
     config.telegram_bot_token = process.env.FIDELIS_TELEGRAM_BOT_TOKEN;
   }
   if (process.env.FIDELIS_TELEGRAM_CHAT_IDS) {
-    config.telegram_allowed_chat_ids = process.env.FIDELIS_TELEGRAM_CHAT_IDS
-      .split(",")
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => !isNaN(n));
+    config.telegram_allowed_chat_ids = parseChatIds(process.env.FIDELIS_TELEGRAM_CHAT_IDS);
   }
   if (process.env.FIDELIS_PERMISSION_TIMEOUT) {
     config.permission_timeout_seconds = parseInt(process.env.FIDELIS_PERMISSION_TIMEOUT, 10) || 120;
@@ -126,6 +150,9 @@ export function loadConfig(): FidelisConfig {
   }
   if (process.env.FIDELIS_VELOCITY_LIMIT) {
     config.velocity_limit_per_minute = parseInt(process.env.FIDELIS_VELOCITY_LIMIT, 10) || 30;
+  }
+  if (process.env.FIDELIS_POLL_INTERVAL_MS) {
+    config.telegram_poll_interval_ms = parseInt(process.env.FIDELIS_POLL_INTERVAL_MS, 10) || 1000;
   }
 
   return config;

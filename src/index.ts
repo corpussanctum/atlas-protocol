@@ -3,31 +3,11 @@
 /**
  * Fidelis Channel — Claude Code Channels Plugin
  *
- * A fiduciary-grade agent authentication channel for Claude Code.
- * Wraps Telegram with:
- *   - Fail-closed permission relay (timeout = DENY)
- *   - Configurable policy engine (deny/ask/allow rules)
- *   - HMAC-signed, hash-chained audit log
- *   - Anomaly detection (velocity, privilege escalation, exfiltration)
- *
- * Implements the Claude Code Channels MCP contract:
- *   - Declares `claude/channel` capability
- *   - Emits `notifications/claude/channel` for inbound Telegram messages
- *   - Handles `notifications/claude/channel/permission_request` for permission relay
- *   - Sends `notifications/claude/channel/permission` verdicts back
- *   - Exposes `fidelis_reply` tool for Claude to send replies
- *   - Exposes `fidelis_audit_verify` tool to verify audit log integrity
- *
- * Transport: stdio (spawned as subprocess by Claude Code)
- *
- * Usage:
- *   claude --channels plugin:fidelis@<marketplace>
- *   # or for development:
- *   claude --dangerously-load-development-channels -- node dist/index.js
- *
- * @see https://code.claude.com/docs/en/channels-reference
- * @author TJ Lane — Corpus Sanctum Inc. / TheraNotes AI LLC
- * @license Apache-2.0
+ * Telegram approval channel for Claude Code with:
+ *   - fail-closed permission relay
+ *   - configurable deny/ask/allow policy rules
+ *   - tamper-evident audit logging
+ *   - anomaly flagging for higher-risk tool requests
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -43,9 +23,7 @@ import type { PermissionRequest, PolicyResult } from "./policy-engine.js";
 import { AuditLogger } from "./audit-log.js";
 import { TelegramBot } from "./telegram.js";
 
-// ---------------------------------------------------------------------------
-// Zod schemas for MCP notifications (Claude Code extensions)
-// ---------------------------------------------------------------------------
+const VERSION = "0.2.0";
 
 const PermissionRequestSchema = z.object({
   method: z.literal("notifications/claude/channel/permission_request"),
@@ -57,25 +35,19 @@ const PermissionRequestSchema = z.object({
   }),
 });
 
-// PermissionVerdictSchema is not needed as a handler — we send verdicts, not receive them.
-
-// ---------------------------------------------------------------------------
-// Initialize components
-// ---------------------------------------------------------------------------
-
 const config = loadConfig();
 const policyEngine = new PolicyEngine(config);
 const audit = new AuditLogger(config);
 const telegram = new TelegramBot(config);
 
-// Log startup
 audit.log("SESSION_START", {
   meta: {
-    version: "0.1.0",
+    version: VERSION,
     telegram_configured: !!config.telegram_bot_token,
     allowed_chats: config.telegram_allowed_chat_ids.length,
     policy_rules: config.policy_rules.length,
     hmac_enabled: !!config.audit_hmac_secret,
+    data_dir: config.data_dir,
   },
 });
 audit.log("CONFIG_LOADED", {
@@ -83,17 +55,14 @@ audit.log("CONFIG_LOADED", {
     timeout_seconds: config.permission_timeout_seconds,
     velocity_limit: config.velocity_limit_per_minute,
     audit_log_path: config.audit_log_path,
+    config_path: config.config_path,
   },
 });
-
-// ---------------------------------------------------------------------------
-// MCP Server setup
-// ---------------------------------------------------------------------------
 
 const mcp = new Server(
   {
     name: "fidelis-channel",
-    version: "0.1.0",
+    version: VERSION,
   },
   {
     capabilities: {
@@ -104,217 +73,230 @@ const mcp = new Server(
       },
     },
     instructions: [
-      "Fidelis Channel is a fiduciary-grade security layer for agent authentication.",
-      "Messages from Telegram arrive as channel events. Claude can reply using the fidelis_reply tool.",
-      "Permission requests are evaluated by a policy engine before reaching the human operator.",
-      "If a permission request is auto-denied by policy, Claude will see a denial with the policy reason.",
-      "All permission decisions are cryptographically logged in a tamper-evident audit trail.",
-      "The operator can verify audit integrity using the fidelis_audit_verify tool.",
-      "",
-      "SECURITY MODEL: Fail-closed. If no human verdict is received within the configured timeout,",
-      "the permission is automatically DENIED. This is by design — Fidelis Protocol requires explicit",
-      "human authorization for all non-trivially-safe operations.",
+      "Fidelis Channel forwards authorized Telegram messages into this Claude Code session.",
+      "Use fidelis_reply to reply to the operator. By default replies go to the most recent authorized chat.",
+      "Permission requests are evaluated by a local policy engine before being relayed to Telegram.",
+      "When no verdict arrives before the timeout, Fidelis denies the request by design.",
+      "Use fidelis_audit_verify to verify the audit log and fidelis_status to inspect runtime status.",
     ].join("\n"),
   }
 );
 
-// ---------------------------------------------------------------------------
-// Tool: fidelis_reply — Claude sends messages back to Telegram
-// ---------------------------------------------------------------------------
-
-mcp.setRequestHandler(
-  ListToolsRequestSchema,
-  async () => ({
-    tools: [
-      {
-        name: "fidelis_reply",
-        description:
-          "Send a reply message to the Telegram operator. Use this to respond to channel messages, report task progress, or notify the operator of important events.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            message: {
-              type: "string",
-              description: "The message text to send (HTML formatting supported)",
-            },
+mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [
+    {
+      name: "fidelis_reply",
+      description:
+        "Send a reply message to the Telegram operator. Defaults to the most recent authorized chat unless chat_id or broadcast is provided.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          message: {
+            type: "string",
+            description: "The message text to send (HTML formatting supported)",
           },
-          required: ["message"],
+          chat_id: {
+            type: "integer",
+            description: "Optional Telegram chat ID to target explicitly",
+          },
+          broadcast: {
+            type: "boolean",
+            description: "Set true to send to all authorized chats",
+          },
         },
+        required: ["message"],
       },
-      {
-        name: "fidelis_audit_verify",
-        description:
-          "Verify the integrity of the Fidelis audit log. Checks hash chain continuity and HMAC signatures. Returns a verification report.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {},
-        },
+    },
+    {
+      name: "fidelis_audit_verify",
+      description:
+        "Verify the integrity of the Fidelis audit log. Checks hash chain continuity and HMAC signatures.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
       },
-      {
-        name: "fidelis_status",
-        description:
-          "Get the current status of the Fidelis Gatekeeper — connection state, policy rule count, audit log stats, and anomaly flags.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {},
-        },
+    },
+    {
+      name: "fidelis_status",
+      description:
+        "Get the current Fidelis runtime status, including Telegram readiness, allowed chats, audit settings, and pending verdict count.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
       },
-    ],
-  })
-);
+    },
+  ],
+}));
 
-mcp.setRequestHandler(
-  CallToolRequestSchema,
-  async (request) => {
-    const { name, arguments: args } = request.params;
+mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
 
-    switch (name) {
-      case "fidelis_reply": {
-        const message = (args?.message as string) || "";
-        if (!message) {
-          return {
-            content: [{ type: "text" as const, text: "Error: message is required" }],
-            isError: true,
-          };
-        }
-        await telegram.sendReply(`💬 <b>Claude:</b>\n${message}`);
+  switch (name) {
+    case "fidelis_reply": {
+      const message = (args?.message as string) || "";
+      const chatId = typeof args?.chat_id === "number" ? args.chat_id : undefined;
+      const broadcast = Boolean(args?.broadcast);
+
+      if (!message) {
         return {
-          content: [{ type: "text" as const, text: "Message sent to Telegram operator." }],
-        };
-      }
-
-      case "fidelis_audit_verify": {
-        const result = audit.verify();
-        const report = result.valid
-          ? "✅ Audit log integrity verified. Hash chain intact, all HMACs valid."
-          : `❌ Audit log integrity FAILED:\n${result.errors.join("\n")}`;
-        return {
-          content: [{ type: "text" as const, text: report }],
-        };
-      }
-
-      case "fidelis_status": {
-        const status = {
-          version: "0.1.0",
-          protocol: "Fidelis Protocol v0.1",
-          telegram_connected: !!config.telegram_bot_token,
-          allowed_chat_ids: config.telegram_allowed_chat_ids,
-          policy_rules_count: config.policy_rules.length,
-          permission_timeout_seconds: config.permission_timeout_seconds,
-          velocity_limit_per_minute: config.velocity_limit_per_minute,
-          hmac_signing_enabled: !!config.audit_hmac_secret,
-          audit_log_path: config.audit_log_path,
-        };
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }],
-        };
-      }
-
-      default:
-        return {
-          content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],
+          content: [{ type: "text" as const, text: "Error: message is required" }],
           isError: true,
         };
+      }
+
+      try {
+        await telegram.sendReply(`💬 <b>Claude:</b>\n${message}`, {
+          chatId,
+          broadcast,
+        });
+        return {
+          content: [{ type: "text" as const, text: "Message sent to Telegram." }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text" as const, text: `Error: ${(error as Error).message}` }],
+          isError: true,
+        };
+      }
     }
+
+    case "fidelis_audit_verify": {
+      const result = audit.verify();
+      const report = result.valid
+        ? "✅ Audit log integrity verified. Hash chain intact and all HMACs present validated."
+        : `❌ Audit log integrity FAILED:\n${result.errors.join("\n")}`;
+      return {
+        content: [{ type: "text" as const, text: report }],
+      };
+    }
+
+    case "fidelis_status": {
+      const telegramStatus = telegram.getStatus();
+      const status = {
+        version: VERSION,
+        telegram_connected: !!config.telegram_bot_token,
+        channel_ready:
+          !!config.telegram_bot_token && config.telegram_allowed_chat_ids.length > 0,
+        allowed_chat_ids: config.telegram_allowed_chat_ids,
+        pending_verdicts: telegramStatus.pending_verdicts,
+        last_inbound_chat_id: telegramStatus.last_inbound_chat_id,
+        policy_rules_count: config.policy_rules.length,
+        permission_timeout_seconds: config.permission_timeout_seconds,
+        velocity_limit_per_minute: config.velocity_limit_per_minute,
+        hmac_signing_enabled: !!config.audit_hmac_secret,
+        audit_log_path: config.audit_log_path,
+        data_dir: config.data_dir,
+      };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(status, null, 2) }],
+      };
+    }
+
+    default:
+      return {
+        content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],
+        isError: true,
+      };
   }
-);
+});
 
-// ---------------------------------------------------------------------------
-// Permission relay: intercept, evaluate, relay, respond
-// ---------------------------------------------------------------------------
+mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
+  const req: PermissionRequest = {
+    request_id: params.request_id,
+    tool_name: params.tool_name,
+    description: params.description,
+    input_preview: params.input_preview,
+  };
 
-mcp.setNotificationHandler(
-  PermissionRequestSchema,
-  async ({ params }) => {
-    const req: PermissionRequest = {
-      request_id: params.request_id,
-      tool_name: params.tool_name,
-      description: params.description,
-      input_preview: params.input_preview,
-    };
+  audit.log("PERMISSION_REQUEST", { permission: req });
 
-    // Audit the incoming request
-    audit.log("PERMISSION_REQUEST", { permission: req });
+  const policyResult: PolicyResult = policyEngine.evaluate(req);
+  if (policyResult.anomaly_flags.length > 0) {
+    audit.log("ANOMALY_DETECTED", {
+      permission: req,
+      policy_result: policyResult,
+      meta: { flags: policyResult.anomaly_flags },
+    });
+  }
 
-    // Log any anomalies
-    const policyResult: PolicyResult = policyEngine.evaluate(req);
-    if (policyResult.anomaly_flags.length > 0) {
-      audit.log("ANOMALY_DETECTED", {
-        permission: req,
-        policy_result: policyResult,
-        meta: { flags: policyResult.anomaly_flags },
-      });
-    }
+  if (policyResult.verdict === "deny") {
+    audit.log("POLICY_DENY", {
+      permission: req,
+      policy_result: policyResult,
+      verdict: "deny",
+    });
 
-    // Policy engine decision
-    if (policyResult.verdict === "deny") {
-      // Auto-deny: send verdict immediately
-      audit.log("POLICY_DENY", {
-        permission: req,
-        policy_result: policyResult,
-        verdict: "deny",
-      });
-
-      // Notify operator of auto-deny
-      const reason = policyResult.matched_rule?.reason || "Policy rule match";
-      await telegram.sendReply(
+    const reason = policyResult.matched_rule?.reason || "Policy rule match";
+    await telegram
+      .sendReply(
         `🚫 <b>AUTO-DENIED</b> by Fidelis policy:\n` +
-        `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
-        `Reason: ${escapeHtml(reason)}`
-      ).catch(() => {});
+          `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
+          `Reason: ${escapeHtml(reason)}`,
+        { broadcast: true }
+      )
+      .catch(() => {});
 
-      sendVerdict(req.request_id, "deny");
-      return;
-    }
-
-    if (policyResult.verdict === "allow") {
-      // Auto-allow (use sparingly — only for known-safe patterns)
-      audit.log("POLICY_ALLOW", {
-        permission: req,
-        policy_result: policyResult,
-        verdict: "allow",
-      });
-
-      sendVerdict(req.request_id, "allow");
-      return;
-    }
-
-    // verdict === "ask": forward to Telegram for human decision
-    const approved = await telegram.requestVerdict(
-      req.request_id,
-      req.tool_name,
-      req.description,
-      req.input_preview,
-      policyResult.anomaly_flags,
-      config.permission_timeout_seconds
-    );
-
-    if (approved) {
-      audit.log("HUMAN_APPROVE", {
-        permission: req,
-        policy_result: policyResult,
-        verdict: "allow",
-      });
-      sendVerdict(req.request_id, "allow");
-    } else {
-      // Could be explicit denial or timeout — both result in deny (fail-closed)
-      audit.log("TIMEOUT_DENY", {
-        permission: req,
-        policy_result: policyResult,
-        verdict: "deny",
-        meta: { reason: "Human denied or timeout reached (fail-closed)" },
-      });
-      sendVerdict(req.request_id, "deny");
-    }
+    sendVerdict(req.request_id, "deny");
+    return;
   }
-);
 
-// ---------------------------------------------------------------------------
-// Inbound Telegram messages → Claude channel events
-// ---------------------------------------------------------------------------
+  if (policyResult.verdict === "allow") {
+    audit.log("POLICY_ALLOW", {
+      permission: req,
+      policy_result: policyResult,
+      verdict: "allow",
+    });
+
+    sendVerdict(req.request_id, "allow");
+    return;
+  }
+
+  const outcome = await telegram.requestVerdict(
+    req.request_id,
+    req.tool_name,
+    req.description,
+    req.input_preview,
+    policyResult.anomaly_flags,
+    config.permission_timeout_seconds
+  );
+
+  if (outcome.decision === "allow") {
+    audit.log("HUMAN_APPROVE", {
+      permission: req,
+      policy_result: policyResult,
+      verdict: "allow",
+      meta: { responder_chat_id: outcome.responder_chat_id },
+    });
+    sendVerdict(req.request_id, "allow");
+    return;
+  }
+
+  if (outcome.decision === "deny") {
+    audit.log("HUMAN_DENY", {
+      permission: req,
+      policy_result: policyResult,
+      verdict: "deny",
+      meta: { responder_chat_id: outcome.responder_chat_id },
+    });
+    sendVerdict(req.request_id, "deny");
+    return;
+  }
+
+  audit.log("TIMEOUT_DENY", {
+    permission: req,
+    policy_result: policyResult,
+    verdict: "deny",
+    meta: {
+      reason:
+        config.telegram_allowed_chat_ids.length === 0
+          ? "No authorized Telegram chat configured"
+          : "No human verdict received before timeout",
+    },
+  });
+  sendVerdict(req.request_id, "deny");
+});
 
 telegram.onMessage((msg) => {
-  // Audit the inbound message
   audit.log("CHANNEL_MESSAGE", {
     meta: {
       from_id: msg.from_id,
@@ -324,8 +306,6 @@ telegram.onMessage((msg) => {
     },
   });
 
-  // Forward to Claude as a channel notification
-  console.error(`[fidelis] Forwarding message from ${msg.from_name}: "${msg.text.slice(0, 80)}"`);
   mcp
     .notification({
       method: "notifications/claude/channel",
@@ -340,17 +320,10 @@ telegram.onMessage((msg) => {
         },
       },
     })
-    .then(() => {
-      console.error("[fidelis] Channel notification sent successfully");
-    })
     .catch((err) => {
       console.error("[fidelis] Failed to emit channel notification:", err);
     });
 });
-
-// ---------------------------------------------------------------------------
-// Send a permission verdict back to Claude Code
-// ---------------------------------------------------------------------------
 
 function sendVerdict(requestId: string, behavior: "allow" | "deny"): void {
   mcp
@@ -366,10 +339,6 @@ function sendVerdict(requestId: string, behavior: "allow" | "deny"): void {
     });
 }
 
-// ---------------------------------------------------------------------------
-// HTML escape helper
-// ---------------------------------------------------------------------------
-
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -378,21 +347,17 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-// ---------------------------------------------------------------------------
-// Connect and run
-// ---------------------------------------------------------------------------
-
 async function main(): Promise<void> {
-  // Start Telegram polling
   await telegram.start();
 
-  // Connect MCP over stdio
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
 
-  console.error("[fidelis] Fidelis Channel v0.1.0 — fiduciary-grade agent gatekeeper active");
-  console.error(`[fidelis] Telegram: ${config.telegram_bot_token ? "configured" : "NOT configured"}`);
-  console.error(`[fidelis] Allowed chats: ${config.telegram_allowed_chat_ids.join(", ") || "none (pairing mode)"}`);
+  console.error(`[fidelis] Fidelis Channel v${VERSION} active`);
+  console.error(`[fidelis] Telegram token: ${config.telegram_bot_token ? "configured" : "NOT configured"}`);
+  console.error(
+    `[fidelis] Authorized chats: ${config.telegram_allowed_chat_ids.join(", ") || "none (locked until configured)"}`
+  );
   console.error(`[fidelis] Policy rules: ${config.policy_rules.length}`);
   console.error(`[fidelis] Timeout: ${config.permission_timeout_seconds}s (fail-closed)`);
   console.error(`[fidelis] Audit log: ${config.audit_log_path}`);

@@ -2,17 +2,11 @@
  * Fidelis Channel — Telegram Integration
  *
  * Lightweight Telegram Bot API client using native fetch (Node 20+).
- * Polls for incoming messages and forwards them to the channel.
- * Sends formatted permission prompts and collects human verdicts.
- *
- * No external Telegram library needed — just the Bot HTTP API.
+ * Polls for incoming messages and forwards authorized messages to the channel.
+ * Sends permission prompts and collects human verdicts.
  */
 
 import type { FidelisConfig } from "./config.js";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface TelegramUpdate {
   update_id: number;
@@ -39,36 +33,35 @@ export interface IncomingMessage {
   timestamp: number;
 }
 
-export type MessageHandler = (msg: IncomingMessage) => void;
+export interface VerdictOutcome {
+  decision: "allow" | "deny" | "timeout";
+  responder_chat_id?: number;
+}
 
-// ---------------------------------------------------------------------------
-// Pending verdict tracking
-// ---------------------------------------------------------------------------
+export interface SendReplyOptions {
+  chatId?: number;
+  broadcast?: boolean;
+}
+
+export type MessageHandler = (msg: IncomingMessage) => void;
 
 interface PendingVerdict {
   request_id: string;
-  resolve: (approved: boolean) => void;
+  resolve: (outcome: VerdictOutcome) => void;
   timer: ReturnType<typeof setTimeout>;
 }
-
-// ---------------------------------------------------------------------------
-// Telegram Bot
-// ---------------------------------------------------------------------------
 
 export class TelegramBot {
   private readonly token: string;
   private readonly allowedChatIds: Set<number>;
   private readonly baseUrl: string;
   private readonly pollIntervalMs: number;
-  private offset: number = 0;
-  private running: boolean = false;
+  private offset = 0;
+  private running = false;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
-
-  /** Handlers for non-verdict messages (forwarded to Claude as channel events) */
   private messageHandlers: MessageHandler[] = [];
-
-  /** Map of request_id → pending verdict promise */
   private pendingVerdicts: Map<string, PendingVerdict> = new Map();
+  private lastInboundChatId: number | null = null;
 
   constructor(config: FidelisConfig) {
     this.token = config.telegram_bot_token;
@@ -77,12 +70,22 @@ export class TelegramBot {
     this.pollIntervalMs = config.telegram_poll_interval_ms;
   }
 
-  // -------------------------------------------------------------------------
-  // Lifecycle
-  // -------------------------------------------------------------------------
-
   onMessage(handler: MessageHandler): void {
     this.messageHandlers.push(handler);
+  }
+
+  getStatus(): {
+    configured: boolean;
+    allowed_chat_ids: number[];
+    pending_verdicts: number;
+    last_inbound_chat_id: number | null;
+  } {
+    return {
+      configured: !!this.token,
+      allowed_chat_ids: Array.from(this.allowedChatIds),
+      pending_verdicts: this.pendingVerdicts.size,
+      last_inbound_chat_id: this.lastInboundChatId,
+    };
   }
 
   async start(): Promise<void> {
@@ -100,17 +103,12 @@ export class TelegramBot {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
-    // Reject all pending verdicts (fail-closed)
     for (const [, pending] of this.pendingVerdicts) {
       clearTimeout(pending.timer);
-      pending.resolve(false);
+      pending.resolve({ decision: "timeout" });
     }
     this.pendingVerdicts.clear();
   }
-
-  // -------------------------------------------------------------------------
-  // Polling loop
-  // -------------------------------------------------------------------------
 
   private async poll(): Promise<void> {
     if (!this.running) return;
@@ -142,31 +140,42 @@ export class TelegramBot {
     const msg = update.message;
     if (!msg?.text || !msg.from) return;
 
-    // Sender gating: only allowed chat IDs
-    if (this.allowedChatIds.size > 0 && !this.allowedChatIds.has(msg.chat.id)) {
+    const text = msg.text.trim();
+
+    if (this.allowedChatIds.size === 0) {
+      console.error(
+        `[fidelis-telegram] Ignoring message from chat ${msg.chat.id}: no authorized chats configured`
+      );
+      return;
+    }
+
+    if (!this.allowedChatIds.has(msg.chat.id)) {
       console.error(`[fidelis-telegram] Dropped message from unauthorized chat ${msg.chat.id}`);
       return;
     }
 
-    const text = msg.text.trim();
+    this.lastInboundChatId = msg.chat.id;
 
-    // Check if this is a verdict reply: "yes <id>" or "no <id>"
-    const verdictMatch = text.match(/^(yes|no|approve|deny)\s+([a-z]{5})$/i);
+    const verdictMatch = text.match(/^(yes|no|approve|deny)\s+([a-km-z]{5})$/i);
     if (verdictMatch) {
-      const approved = verdictMatch[1].toLowerCase() === "yes" || verdictMatch[1].toLowerCase() === "approve";
+      const approved = ["yes", "approve"].includes(verdictMatch[1].toLowerCase());
       const requestId = verdictMatch[2].toLowerCase();
       const pending = this.pendingVerdicts.get(requestId);
       if (pending) {
         clearTimeout(pending.timer);
         this.pendingVerdicts.delete(requestId);
-        pending.resolve(approved);
-        // Acknowledge
-        this.sendMessage(msg.chat.id, `✅ Verdict recorded: ${approved ? "APPROVED" : "DENIED"} for ${requestId}`).catch(() => {});
+        pending.resolve({
+          decision: approved ? "allow" : "deny",
+          responder_chat_id: msg.chat.id,
+        });
+        this.sendMessage(
+          msg.chat.id,
+          `✅ Verdict recorded: ${approved ? "APPROVED" : "DENIED"} for ${requestId}`
+        ).catch(() => {});
         return;
       }
     }
 
-    // Non-verdict message → forward to channel handlers
     const incoming: IncomingMessage = {
       chat_id: msg.chat.id,
       from_id: msg.from.id,
@@ -184,11 +193,7 @@ export class TelegramBot {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Outbound messaging
-  // -------------------------------------------------------------------------
-
-  async sendMessage(chatId: number, text: string, parseMode: string = "HTML"): Promise<void> {
+  async sendMessage(chatId: number, text: string, parseMode = "HTML"): Promise<void> {
     const url = `${this.baseUrl}/sendMessage`;
     await fetch(url, {
       method: "POST",
@@ -202,10 +207,6 @@ export class TelegramBot {
     });
   }
 
-  /**
-   * Send a permission prompt to all allowed chats and wait for a verdict.
-   * Returns true if approved, false if denied or timed out (fail-closed).
-   */
   async requestVerdict(
     requestId: string,
     toolName: string,
@@ -213,11 +214,10 @@ export class TelegramBot {
     inputPreview: string,
     anomalyFlags: string[],
     timeoutSeconds: number
-  ): Promise<boolean> {
-    // Build the Telegram prompt
+  ): Promise<VerdictOutcome> {
     const anomalySection =
       anomalyFlags.length > 0
-        ? `\n\n⚠️ <b>ANOMALY FLAGS:</b>\n${anomalyFlags.map((f) => `• ${f}`).join("\n")}`
+        ? `\n\n⚠️ <b>ANOMALY FLAGS:</b>\n${anomalyFlags.map((f) => `• ${escapeHtml(f)}`).join("\n")}`
         : "";
 
     const prompt = [
@@ -233,14 +233,10 @@ export class TelegramBot {
       `⏱ Auto-deny in ${timeoutSeconds}s (fail-closed)`,
     ].join("\n");
 
-    // Send to all allowed chats
-    const chatIds = this.allowedChatIds.size > 0
-      ? Array.from(this.allowedChatIds)
-      : [];
-
+    const chatIds = Array.from(this.allowedChatIds);
     if (chatIds.length === 0) {
       console.error("[fidelis-telegram] No allowed chat IDs configured — auto-deny");
-      return false;
+      return { decision: "timeout" };
     }
 
     for (const chatId of chatIds) {
@@ -249,31 +245,56 @@ export class TelegramBot {
       });
     }
 
-    // Wait for verdict or timeout
-    return new Promise<boolean>((resolve) => {
+    return new Promise<VerdictOutcome>((resolve) => {
       const timer = setTimeout(() => {
         this.pendingVerdicts.delete(requestId);
-        resolve(false); // FAIL-CLOSED
+        resolve({ decision: "timeout" });
       }, timeoutSeconds * 1000);
 
-      this.pendingVerdicts.set(requestId, { request_id: requestId, resolve, timer });
+      this.pendingVerdicts.set(requestId, {
+        request_id: requestId,
+        resolve,
+        timer,
+      });
     });
   }
 
-  /**
-   * Send a reply message (for the Claude reply tool).
-   */
-  async sendReply(text: string): Promise<void> {
-    const chatIds = Array.from(this.allowedChatIds);
-    for (const chatId of chatIds) {
-      await this.sendMessage(chatId, text, "HTML").catch(() => {});
+  async sendReply(text: string, options: SendReplyOptions = {}): Promise<void> {
+    const targetChatIds = this.resolveReplyTargets(options);
+    for (const chatId of targetChatIds) {
+      await this.sendMessage(chatId, text, "HTML");
     }
   }
-}
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+  private resolveReplyTargets(options: SendReplyOptions): number[] {
+    if (options.chatId !== undefined) {
+      if (!this.allowedChatIds.has(options.chatId)) {
+        throw new Error(`Chat ${options.chatId} is not in the allowed chat list`);
+      }
+      return [options.chatId];
+    }
+
+    if (options.broadcast) {
+      return Array.from(this.allowedChatIds);
+    }
+
+    if (this.lastInboundChatId !== null && this.allowedChatIds.has(this.lastInboundChatId)) {
+      return [this.lastInboundChatId];
+    }
+
+    if (this.allowedChatIds.size === 1) {
+      return [Array.from(this.allowedChatIds)[0]];
+    }
+
+    if (this.allowedChatIds.size === 0) {
+      throw new Error("No allowed Telegram chat IDs configured");
+    }
+
+    throw new Error(
+      "Multiple allowed chats are configured and no reply target is known. Pass chat_id or broadcast=true."
+    );
+  }
+}
 
 function escapeHtml(text: string): string {
   return text

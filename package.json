@@ -1,7 +1,7 @@
 {
   "name": "fidelis-channel",
-  "version": "0.1.0",
-  "description": "Fidelis Protocol Gatekeeper — fiduciary-grade agent authentication channel for Claude Code. Fail-closed Telegram permission relay with policy engine, cryptographic audit logging, and anomaly detection.",
+  "version": "0.2.0",
+  "description": "Telegram approval channel for Claude Code with fail-closed permission relay, policy rules, and tamper-evident audit logging.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "start": "npm run build --silent && node dist/index.js",
+    "start": "node dist/index.js",
     "dev": "tsc --watch",
     "test": "node --import tsx --test tests/*.test.ts"
   },
@@ -17,13 +17,12 @@
     "claude-code",
     "channels",
     "mcp",
-    "fidelis-protocol",
-    "fiduciary-ai",
-    "agent-auth",
-    "post-quantum",
-    "telegram"
+    "telegram",
+    "permission-relay",
+    "audit-log",
+    "security"
   ],
-  "author": "TJ Lane <tj@corpussanctum.org>",
+  "author": "TJ Lane <tj@corpussanctum.ai>",
   "license": "Apache-2.0",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

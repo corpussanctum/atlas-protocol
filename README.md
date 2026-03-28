@@ -1,232 +1,118 @@
 # Fidelis Channel
 
-**Fiduciary-grade agent authentication for Claude Code.**
+Telegram approval channel for Claude Code with:
 
-A Claude Code Channels plugin that wraps Telegram with a security layer designed for healthcare, legal, and fiduciary AI contexts — where autonomous agent actions require verifiable, auditable human authorization.
+- fail-closed permission relay
+- configurable policy rules
+- anomaly flags for higher-risk requests
+- tamper-evident audit logging
 
-> *Part of the [Fidelis Protocol](https://github.com/corpussanctum/fidelis-protocol) — an open standard for fiduciary AI-agent interoperability.*
-
----
+This plugin is meant to make remote approval and operator oversight tighter. It is **not** a compliance certification, legal guarantee, or a substitute for local review of high-risk actions.
 
 ## What it does
 
-When Claude Code needs permission to run a tool (write a file, execute a command, access a resource), Fidelis Channel:
+When Claude Code hits a tool approval prompt, Fidelis Channel can:
 
-1. **Evaluates** the request against a configurable policy engine
-2. **Auto-denies** requests matching known-dangerous patterns (fail-closed)
-3. **Forwards** ambiguous requests to your Telegram with anomaly flags
-4. **Waits** for your explicit `yes`/`no` verdict
-5. **Auto-denies** if you don't respond within the timeout (fail-closed)
-6. **Logs** every decision in a tamper-evident, HMAC-signed audit trail
+1. evaluate the request against local deny/ask/allow rules
+2. auto-deny known-dangerous patterns
+3. forward unresolved requests to Telegram
+4. wait for an explicit `yes <id>` or `no <id>` reply
+5. auto-deny on timeout
+6. record the decision in a hash-chained audit log, with optional HMAC signing
 
-You also get a full two-way Telegram channel — message Claude Code from your phone, get replies, kick off tasks while you're away.
+It also works as a two-way chat bridge: authorized Telegram messages are injected into the Claude Code session, and Claude can reply with the `fidelis_reply` tool.
 
-## Why it exists
+## Current constraints
 
-Anthropic's native Channels permission relay is a good start. But it lacks:
+- Channels are in research preview and require Claude Code **v2.1.80+**.
+- Permission relay requires Claude Code **v2.1.81+**.
+- Channels require **claude.ai login**; Console/API-key auth does not support them.
+- Team and Enterprise orgs must explicitly enable channels. citeturn175972view2
 
-- **Fail-closed defaults** — native channels have no timeout-to-deny behavior
-- **Policy engine** — no way to auto-block dangerous patterns before they reach you
-- **Anomaly detection** — no velocity tracking, privilege escalation detection, or exfiltration alerts
-- **Cryptographic audit** — no tamper-evident logging for compliance/regulatory contexts
-- **Fiduciary framing** — no concept of an agent acting in a principal's best interest with verifiable authorization
+## Security posture
 
-Fidelis Channel adds all of these on top of the standard Channels contract.
+This revision intentionally tightens a few things:
 
-## Quick start
+- **No open pairing mode.** If no authorized chat ID is configured, inbound Telegram messages are ignored and permission prompts fail closed.
+- **No default reply broadcast.** `fidelis_reply` now targets the most recent authorized chat by default. Broadcasting is explicit.
+- **Distinct audit outcomes.** Explicit human denials and timeout denials are logged separately.
+- **Plugin-state aware paths.** By default, runtime state lives in `${CLAUDE_PLUGIN_DATA}` when installed as a plugin, which survives updates. Claude Code docs recommend that location for installed dependencies and plugin state. citeturn987090view0
 
-### 1. Create a bot with BotFather
+## Installation
 
-Open [@BotFather](https://t.me/BotFather) on Telegram and send `/newbot`. You'll get a token like `123456789:AAHfiqk...`.
+### Marketplace install
 
-### 2. Install the plugin
-
-```
-/plugin install fidelis-channel@claude-plugins-official
-```
-
-### 3. Configure
-
-```
-/fidelis:configure 123456789:AAHfiqk...
-```
-
-This saves the token to `~/.fidelis-channel/config.json`. Then add your Telegram chat ID (DM [@userinfobot](https://t.me/userinfobot) to find yours):
-
-```
-/fidelis:configure chat 123456789
-```
-
-Enable HMAC audit signing:
-
-```
-/fidelis:configure hmac generate
-```
-
-### 4. Launch with the channel flag
+Replace `your-marketplace` with the marketplace that actually hosts this plugin:
 
 ```bash
-claude --channels plugin:fidelis-channel@claude-plugins-official
+claude plugin install fidelis-channel@your-marketplace
 ```
 
-Or for development (before marketplace approval):
+Do **not** claim or document `claude-plugins-official` unless the plugin is actually listed there. Marketplace identifiers are public-facing and come from the marketplace definition, not from the plugin itself. citeturn175972view1
+
+When you enable the plugin, Claude Code can prompt for channel-specific configuration using `channels[].userConfig`. This package uses that mechanism for the Telegram bot token, allowed chat IDs, and optional audit HMAC secret. Sensitive values can be stored in the system keychain. citeturn213093view0turn987090view1
+
+### Local development
 
 ```bash
-claude --dangerously-load-development-channels server:fidelis-channel
+claude --plugin-dir ./fidelis-channel
 ```
 
-### 5. Message your bot
+Plugin skills are namespaced by the plugin name, so commands appear like `/fidelis-channel:status`. citeturn516797view2turn987090view1
 
-DM your bot on Telegram. Your message arrives in the Claude session. Claude can reply using the `fidelis_reply` tool.
+## Runtime packaging notes
 
-### Manual setup (without marketplace)
+Marketplace plugins are copied into Claude Code’s local plugin cache, so they should not rely on files outside the plugin directory. Claude Code documents `${CLAUDE_PLUGIN_ROOT}` for bundled files and `${CLAUDE_PLUGIN_DATA}` for persistent state and installed dependencies. This package follows that pattern. citeturn987090view0
 
-Add to your project's `.mcp.json`:
+The included `SessionStart` hook installs runtime dependencies into `${CLAUDE_PLUGIN_DATA}/node_modules` when the bundled manifest changes. That matches the documented pattern for plugins that need Node dependencies at runtime. citeturn987090view0
 
-```json
-{
-  "mcpServers": {
-    "fidelis-channel": {
-      "command": "node",
-      "args": ["/path/to/fidelis-channel/dist/index.js"],
-      "env": {
-        "FIDELIS_TELEGRAM_BOT_TOKEN": "your-token",
-        "FIDELIS_TELEGRAM_CHAT_IDS": "your-chat-id"
-      }
-    }
-  }
-}
-```
+## Configuration model
 
-### Policy configuration
+Primary path:
 
-Create `~/.fidelis-channel/config.json` for full control:
+- `bot_token` — Telegram bot token from BotFather
+- `owner_chat_ids` — comma-separated Telegram chat IDs allowed to send messages and approve requests
+- `audit_hmac_secret` — optional HMAC secret for audit signing
 
-```json
-{
-  "telegram_bot_token": "123456789:AAHfiqk...",
-  "telegram_allowed_chat_ids": [123456789],
-  "permission_timeout_seconds": 120,
-  "audit_hmac_secret": "your-secret-key-here",
-  "velocity_limit_per_minute": 30,
-  "policy_rules": [
-    {
-      "tool_pattern": "Bash(rm -rf *)",
-      "action": "deny",
-      "reason": "Recursive force-delete blocked"
-    },
-    {
-      "tool_pattern": "Bash(*curl*|*wget*|*nc *|*netcat*)",
-      "action": "deny",
-      "reason": "Network exfiltration blocked"
-    },
-    {
-      "tool_pattern": "Read",
-      "action": "allow",
-      "reason": "File reads are safe"
-    }
-  ]
-}
-```
+Advanced users can still override runtime behavior with environment variables such as:
 
-## Architecture
-
-```
-┌─────────────────┐     stdio      ┌──────────────────────────────────┐
-│   Claude Code   │◄──────────────►│       Fidelis Channel (MCP)      │
-│                 │                 │                                  │
-│ • Tool calls    │   permission    │  ┌────────────┐                  │
-│ • File edits    │───request──────►│  │  Policy     │──deny──►audit   │
-│ • Bash cmds     │                 │  │  Engine     │                  │
-│                 │                 │  └─────┬──────┘                  │
-│                 │   verdict       │        │ask                      │
-│                 │◄───────────────│  ┌─────▼──────┐   ┌──────────┐  │
-│                 │                 │  │  Telegram   │◄─►│  Human   │  │
-│                 │   channel msg   │  │  Bot        │   │  (you)   │  │
-│                 │◄───────────────│  └─────────────┘   └──────────┘  │
-│                 │                 │                                  │
-│                 │                 │  ┌─────────────┐                  │
-│                 │                 │  │  Audit Log  │ HMAC + chain    │
-│                 │                 │  └─────────────┘                  │
-└─────────────────┘                 └──────────────────────────────────┘
-```
-
-### Security model
-
-| Layer | What it does |
-|-------|-------------|
-| **Policy engine** | Pattern-matched rules evaluate every request before it reaches a human. First match wins. Known-dangerous patterns are auto-denied. |
-| **Anomaly detection** | Velocity tracking (requests/min), privilege escalation detection (sudo, chmod, credential access), data exfiltration patterns (curl POST, netcat). Anomaly flags are shown in the Telegram prompt. |
-| **Fail-closed timeout** | If no human verdict arrives within the configured timeout (default 120s), the request is automatically DENIED. No silent approvals. |
-| **Sender gating** | Only Telegram chat IDs in the allowlist can issue verdicts. All other messages are silently dropped. |
-| **Audit trail** | Every decision is logged to an append-only JSONL file with SHA-256 hash chaining and optional HMAC-SHA256 signatures. |
-
-### Policy rules
-
-Rules are evaluated in order. First match wins. If no rule matches, the default is `ask` (forward to human).
-
-```json
-{
-  "tool_pattern": "Bash(*curl*|*wget*)",
-  "action": "deny",
-  "reason": "Outbound network access blocked"
-}
-```
-
-Pattern format: `ToolName` or `ToolName(input_glob)` where `*` matches any characters. Pipe `|` separates alternatives inside the input glob.
-
-### Anomaly flags
-
-The policy engine detects these patterns and surfaces them as warnings in the Telegram prompt:
-
-- `VELOCITY_EXCEEDED` — too many permission requests per minute
-- `PRIVILEGE_ESCALATION` — sudo, chmod 777, chown, passwd
-- `SENSITIVE_ACCESS` — .env, .ssh, credentials, API keys
-- `DATA_EXFILTRATION` — curl with POST data, netcat
-- `DESTRUCTIVE_GIT` — force push, hard reset
-
-### Audit log verification
-
-From within a Claude Code session:
-
-```
-Use the fidelis_audit_verify tool to check the audit log integrity.
-```
-
-Or programmatically:
-
-```typescript
-import { AuditLogger } from "fidelis-channel/audit-log";
-const audit = new AuditLogger(config);
-const { valid, errors } = audit.verify();
-```
+- `FIDELIS_TELEGRAM_BOT_TOKEN`
+- `FIDELIS_TELEGRAM_CHAT_IDS`
+- `FIDELIS_PERMISSION_TIMEOUT`
+- `FIDELIS_HMAC_SECRET`
+- `FIDELIS_AUDIT_LOG_PATH`
+- `FIDELIS_DATA_DIR`
 
 ## Tools exposed to Claude
 
-| Tool | Description |
-|------|-------------|
-| `fidelis_reply` | Send a message back to the Telegram operator |
-| `fidelis_audit_verify` | Verify audit log hash chain and HMAC integrity |
-| `fidelis_status` | Get current gatekeeper status and configuration |
+- `fidelis_reply` — send a Telegram reply, optionally to a specific `chat_id` or to all authorized chats with `broadcast=true`
+- `fidelis_audit_verify` — verify audit log integrity
+- `fidelis_status` — inspect current runtime status
 
-## Roadmap
+## Audit log
 
-- [ ] Post-quantum signatures (ML-DSA-65 via liboqs, replacing HMAC)
-- [ ] DIB Vault integration (consent-tiered permission policies)
-- [ ] Fiduciary score — quantified trust metric from audit history
-- [ ] Multi-operator quorum (N-of-M approval for high-risk actions)
-- [ ] Briefcase context injection (load operator identity into Claude session)
-- [ ] Plugin marketplace submission (official Anthropic allowlist)
-- [ ] WhatsApp / Signal / Slack channel support
+The audit log is append-only JSONL with SHA-256 hash chaining. If you provide an HMAC secret, entries are also signed with HMAC-SHA256.
 
-## Fidelis Protocol
+Audit events distinguish:
 
-This plugin is the reference implementation of the **Fidelis Protocol** — a proposed standard for fiduciary AI-agent interoperability, analogous to SMART on FHIR for healthcare data exchange.
+- `POLICY_DENY`
+- `POLICY_ALLOW`
+- `HUMAN_APPROVE`
+- `HUMAN_DENY`
+- `TIMEOUT_DENY`
 
-The core principle: **an AI agent acting on behalf of a principal must provide cryptographic proof of authorization, maintain an auditable decision trail, and default to denial when authorization is ambiguous.**
+That separation matters if you want a truthful record of whether a denial came from a person or from fail-closed timeout behavior.
 
-Learn more at [corpussanctum.org](https://corpussanctum.org).
+## Limits and honest positioning
 
-## License
+This plugin can improve operator control and evidence trails. It does **not** by itself make a workflow HIPAA compliant, legally compliant, or “fiduciary” in any enforceable sense. If you use those terms publicly, back them with a precise threat model, operational controls, and limitation language.
 
-Apache-2.0 — Corpus Sanctum Inc.
+## Validation before submission
+
+Run the plugin validator before submitting:
+
+```bash
+claude plugin validate
+```
+
+Claude Code docs recommend `claude plugin validate` or `/plugin validate` to catch manifest and frontmatter issues before distribution. citeturn213093view6
