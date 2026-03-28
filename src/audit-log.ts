@@ -70,6 +70,12 @@ export interface AuditEntry {
   /** Reason attestation was denied (if applicable) */
   attestationDenyReason?: string;
 
+  // -- Why Layer (v0.6.0+) ---------------------------------------------------
+  /** Whether the Why Engine was triggered for this entry */
+  whyTriggered?: boolean;
+  /** The trigger reason (DENY_THRESHOLD, HIGH_RISK_TECHNIQUE, etc.) */
+  whyTriggerReason?: string;
+
   /** Hash algorithm used for prev_hash (absent on legacy SHA-256 entries) */
   hash_algorithm?: "sha3-256";
   /** Hash of the previous log line — SHA3-256 for v0.4.0+, SHA-256 for legacy */

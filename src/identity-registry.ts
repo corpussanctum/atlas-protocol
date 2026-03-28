@@ -18,13 +18,21 @@ import type { QuantumSigner } from "./quantum-signer.js";
 import {
   initAgentIdentity,
   issueCredential,
+  issueCredentialWithKey,
   verifyCredential,
   revokeCredential as revokeCredentialFn,
+  validateDelegation,
+  delegateCredential,
+  delegateCredentialWithKey,
+  isDelegatedCredential,
+  cascadeRevoke as cascadeRevokeFn,
 } from "./agent-identity.js";
 import type {
   AgentCredential,
   CredentialIssueRequest,
   CredentialVerifyResult,
+  DelegationRequest,
+  DelegatedCredential,
 } from "./agent-identity.js";
 
 // ---------------------------------------------------------------------------
@@ -33,6 +41,10 @@ import type {
 
 export class IdentityRegistry {
   private credentials: Map<string, AgentCredential> = new Map();
+  /** Parent → children index for efficient delegation tree walks */
+  private childrenIndex: Map<string, string[]> = new Map();
+  /** Agent secret keys (in-memory only, never persisted) */
+  private agentSecretKeys: Map<string, Uint8Array> = new Map();
   private readonly storagePath: string;
   private readonly signer: QuantumSigner;
   private issuerSecretKey: Uint8Array | null = null;
@@ -78,8 +90,13 @@ export class IdentityRegistry {
       throw new Error("Registry not initialized — issuer key unavailable");
     }
 
-    const credential = issueCredential(request, this.issuerSecretKey);
+    const { credential, agentSecretKey } = issueCredentialWithKey(
+      request,
+      this.issuerSecretKey
+    );
     this.credentials.set(credential.agentId, credential);
+    // Store secret key in-memory for delegation support
+    this.agentSecretKeys.set(credential.agentId, agentSecretKey);
     this.save();
 
     return credential;
@@ -132,7 +149,7 @@ export class IdentityRegistry {
   /**
    * List credentials, optionally filtered.
    */
-  list(filter: "active" | "revoked" | "expired" | "all" = "all"): AgentCredential[] {
+  list(filter: "active" | "revoked" | "expired" | "delegated" | "all" = "all"): AgentCredential[] {
     const all = Array.from(this.credentials.values());
     const now = new Date();
 
@@ -147,6 +164,8 @@ export class IdentityRegistry {
         return all.filter(
           (c) => !c.revoked && new Date(c.expiresAt) <= now
         );
+      case "delegated":
+        return all.filter((c) => isDelegatedCredential(c));
       case "all":
       default:
         return all;
@@ -168,6 +187,112 @@ export class IdentityRegistry {
     return this.credentials.size;
   }
 
+  // =========================================================================
+  // Delegation (v0.6.0)
+  // =========================================================================
+
+  /**
+   * Issue a delegated credential from a parent. Validates the request,
+   * issues the child, updates the children index, and persists.
+   * Returns the DelegatedCredential (caller must not expose agent secret keys).
+   */
+  delegate(request: DelegationRequest): DelegatedCredential {
+    if (!this.issuerSecretKey) {
+      throw new Error("Registry not initialized — issuer key unavailable");
+    }
+
+    // Validate (skip TTL check — delegateCredentialWithKey caps TTL automatically)
+    const validation = validateDelegation(
+      { ...request, ttlHours: undefined },
+      this
+    );
+    if (!validation.valid) {
+      throw new Error(`Delegation failed: ${validation.reason}`);
+    }
+
+    // Get parent's agent secret key (must be in-memory from registration/delegation)
+    const parentSecretKey = this.agentSecretKeys.get(request.parentAgentId);
+    if (!parentSecretKey) {
+      throw new Error(
+        "Parent agent secret key not available — parent was registered in a previous session"
+      );
+    }
+
+    const { credential, childSecretKey } = delegateCredentialWithKey(
+      request,
+      parentSecretKey,
+      this.issuerSecretKey,
+      this
+    );
+
+    // Store credential and child secret key (in-memory only)
+    this.credentials.set(credential.agentId, credential);
+    this.agentSecretKeys.set(credential.agentId, childSecretKey);
+
+    // Update children index
+    const parentChildren = this.childrenIndex.get(request.parentAgentId) || [];
+    parentChildren.push(credential.agentId);
+    this.childrenIndex.set(request.parentAgentId, parentChildren);
+
+    this.save();
+    return credential;
+  }
+
+  /**
+   * Store an agent's secret key in-memory (never persisted).
+   * Called after register() or delegate() when the caller needs to
+   * enable further delegation from this agent.
+   */
+  storeAgentSecretKey(agentId: string, secretKey: Uint8Array): void {
+    this.agentSecretKeys.set(agentId, secretKey);
+  }
+
+  /**
+   * Get an agent's secret key from in-memory storage.
+   */
+  getAgentSecretKey(agentId: string): Uint8Array | undefined {
+    return this.agentSecretKeys.get(agentId);
+  }
+
+  /**
+   * Get direct children of a credential.
+   */
+  getChildren(parentAgentId: string): AgentCredential[] {
+    const childIds = this.childrenIndex.get(parentAgentId) || [];
+    return childIds
+      .map((id) => this.credentials.get(id))
+      .filter((c): c is AgentCredential => c !== undefined);
+  }
+
+  /**
+   * Get all descendants (recursive) of a credential.
+   */
+  getDescendants(agentId: string): AgentCredential[] {
+    const result: AgentCredential[] = [];
+    const children = this.getChildren(agentId);
+    for (const child of children) {
+      result.push(child);
+      result.push(...this.getDescendants(child.agentId));
+    }
+    return result;
+  }
+
+  /**
+   * Cascade-revoke a parent and all its descendants.
+   * Returns array of all revoked agentIds.
+   */
+  cascadeRevoke(parentAgentId: string, reason: string): string[] {
+    const revoked = cascadeRevokeFn(parentAgentId, reason, this);
+
+    // Clear session keys for revoked agents
+    for (const id of revoked) {
+      this.agentSecretKeys.delete(id);
+    }
+
+    this.save();
+    return revoked;
+  }
+
   /**
    * Persist registry to disk (JSON, chmod 600).
    */
@@ -177,8 +302,11 @@ export class IdentityRegistry {
       mkdirSync(dir, { recursive: true });
     }
 
-    // Strip any fields that should never be persisted
-    const serializable = Array.from(this.credentials.values());
+    // Persist credentials + children index (never secret keys)
+    const serializable = {
+      credentials: Array.from(this.credentials.values()),
+      children: Object.fromEntries(this.childrenIndex.entries()),
+    };
     writeFileSync(
       this.storagePath,
       JSON.stringify(serializable, null, 2),
@@ -200,11 +328,35 @@ export class IdentityRegistry {
 
     try {
       const raw = JSON.parse(readFileSync(this.storagePath, "utf-8"));
-      if (Array.isArray(raw)) {
-        this.credentials.clear();
-        for (const cred of raw as AgentCredential[]) {
-          if (cred.agentId) {
-            this.credentials.set(cred.agentId, cred);
+
+      // Support both old format (array) and new format (object with children index)
+      const credArray: AgentCredential[] = Array.isArray(raw)
+        ? raw
+        : (raw.credentials ?? []);
+      const childrenObj: Record<string, string[]> = Array.isArray(raw)
+        ? {}
+        : (raw.children ?? {});
+
+      this.credentials.clear();
+      this.childrenIndex.clear();
+
+      for (const cred of credArray) {
+        if (cred.agentId) {
+          this.credentials.set(cred.agentId, cred);
+        }
+      }
+
+      for (const [parentId, childIds] of Object.entries(childrenObj)) {
+        this.childrenIndex.set(parentId, childIds);
+      }
+
+      // Rebuild children index from credentials if not in persisted data
+      if (Object.keys(childrenObj).length === 0) {
+        for (const cred of credArray) {
+          if (isDelegatedCredential(cred)) {
+            const existing = this.childrenIndex.get(cred.delegation.parentId) || [];
+            existing.push(cred.agentId);
+            this.childrenIndex.set(cred.delegation.parentId, existing);
           }
         }
       }

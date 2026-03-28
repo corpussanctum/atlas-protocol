@@ -76,8 +76,8 @@ describe("IdentityRegistry — registration", () => {
     assert.ok(existsSync(filePath), "Registry file should exist");
 
     const content = JSON.parse(readFileSync(filePath, "utf-8"));
-    assert.equal(content.length, 1);
-    assert.equal(content[0].name, "persist-test");
+    assert.equal(content.credentials.length, 1);
+    assert.equal(content.credentials[0].name, "persist-test");
   });
 });
 

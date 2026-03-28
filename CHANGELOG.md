@@ -2,6 +2,64 @@
 
 All notable changes to Fidelis Channel are documented in this file.
 
+## [0.6.0] - 2026-03-28
+
+### Added
+- **Credential Delegation** — orchestrator agents issue scoped sub-credentials
+  - `DelegationChain` binds root → parent → child with ML-DSA-65 chain signatures
+  - `DelegatedCredential` extends AgentCredential with delegation metadata
+  - Max delegation depth: 3 (configurable constant)
+  - Child capabilities must be strict subset of parent's
+  - Child TTL automatically capped at parent's remaining lifetime
+  - `validateDelegation()` — pre-flight check with 6 failure modes
+  - `delegateCredential()` / `delegateCredentialWithKey()` — chain-signed issuance
+  - `verifyDelegationChain()` — recursive verification of entire chain
+  - `cascadeRevoke()` — revoking a parent cascades to all descendants
+  - `issueCredentialWithKey()` — returns agent secret key for delegation support
+- **3 new MCP tools** for delegation:
+  - `fidelis_identity_delegate` — issue scoped child credential
+  - `fidelis_identity_cascade_revoke` — revoke parent + all descendants
+  - `fidelis_identity_tree` — view credential hierarchy
+- **Identity Registry delegation support**:
+  - `delegate()`, `getChildren()`, `getDescendants()`, `cascadeRevoke()`
+  - `children` index persisted in registry JSON for efficient tree walks
+  - Agent secret keys stored in-memory (never persisted) for delegation chain
+  - `list("delegated")` filter for delegation-only view
+- **Why Layer** — Council of Experts (CoE) reasoning engine
+  - 3 expert agents: Anomaly Detector, Intent Inferencer, Threat Narrator
+  - Parallel async execution via Ollama (local-first, privacy-preserving)
+  - `WhyAssessment` with risk scoring, recommended actions, research artifacts
+  - `ResearchArtifact` structured for grant demos and research papers
+  - Configurable via env vars: WHY_ENGINE_MODEL, WHY_ENGINE_BASE_URL, etc.
+  - Graceful degradation: returns nominal stub if Ollama unavailable (never throws)
+- **Why Triggers** — automatic Why Layer invocation on:
+  - DENY_THRESHOLD (3+ denies in window)
+  - HITL_ESCALATION (human approve/deny events)
+  - HIGH_RISK_TECHNIQUE (Credential Access, Exfiltration, C2, Defense Evasion)
+  - IDENTITY_ANOMALY (unregistered agent, expired credential)
+  - CASCADE_REVOCATION events
+  - Cooldown logic prevents over-triggering (default: 30s)
+- **1 new MCP tool**: `fidelis_why_assess` — manual Why Layer assessment
+- **Telegram alerts enriched** with Why Layer synthesis and risk scores
+- **AuditEntry extensions**: `whyTriggered`, `whyTriggerReason` fields
+- Auto-tracking of audit entries for Why Layer event windows
+- New source files: `why-engine.ts`, `why-triggers.ts`
+- New test suites: `credential-delegation.test.ts`, `why-engine.test.ts`, `why-triggers.test.ts`
+- 44 new tests (315 total, all passing)
+
+### Changed
+- Version bumped to 0.6.0 (credential delegation + Why Layer release)
+- Registry save format: `{ credentials, children }` (backwards-compatible load)
+- `register()` now stores agent secret key in-memory for delegation support
+- Audit logger wrapped to auto-track entries for Why Layer trigger evaluation
+
+### Security
+- Delegation chain signatures provide cryptographic binding (root → child)
+- Capability escalation impossible — child capabilities strictly subset of parent
+- Cascade revocation ensures compromised parent revokes entire subtree
+- Agent secret keys never persisted to disk — in-memory session lifetime only
+- Why Layer is non-blocking: gatekeeper never fails if Ollama is down
+
 ## [0.5.0] - 2026-03-28
 
 ### Added

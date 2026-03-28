@@ -23,13 +23,19 @@ import { loadConfig } from "./config.js";
 import { PolicyEngine } from "./policy-engine.js";
 import type { PermissionRequest, PolicyResult } from "./policy-engine.js";
 import { AuditLogger } from "./audit-log.js";
+import type { AuditEntry } from "./audit-log.js";
 import { TelegramBot } from "./telegram.js";
 import { createIdentityProvider } from "./identity-provider.js";
 import type { IdentityContext } from "./identity-provider.js";
 import { QuantumSigner } from "./quantum-signer.js";
 import { IdentityRegistry } from "./identity-registry.js";
 import { attestAgent, enrichAuditEntry, toolToCapability, sanitizeCredential } from "./attestation.js";
-import type { AgentRole, AgentCapability } from "./agent-identity.js";
+import type { AgentRole, AgentCapability, DelegationRequest } from "./agent-identity.js";
+import { isDelegatedCredential } from "./agent-identity.js";
+import { assessWindow, loadWhyConfig, stubAssessment } from "./why-engine.js";
+import type { WhyAssessment, AuditEventWindow } from "./why-engine.js";
+import { shouldTrigger, formatTelegramAlert, loadTriggerConfig } from "./why-triggers.js";
+import type { WhyTrigger } from "./why-triggers.js";
 
 const VERSION = "0.5.0";
 
@@ -67,6 +73,12 @@ async function main(): Promise<void> {
 
   // Session-level active agent ID (set by fidelis_identity_register)
   let sessionAgentId: string | undefined;
+
+  // Why Layer state
+  const whyConfig = loadWhyConfig();
+  const triggerConfig = loadTriggerConfig();
+  let lastWhyAssessmentTime: Date | undefined;
+  const recentAuditEntries: AuditEntry[] = [];
 
   const audit = new AuditLogger(
     config,
@@ -229,6 +241,64 @@ async function main(): Promise<void> {
             reason: { type: "string", description: "Reason for revocation" },
           },
           required: ["agent_id", "reason"],
+        },
+      },
+      // -- Delegation tools (v0.6.0) ------------------------------------------
+      {
+        name: "fidelis_identity_delegate",
+        description:
+          "Delegate a scoped sub-credential from a parent agent. Child capabilities must be a subset of parent's. Max depth: 3.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            parent_agent_id: { type: "string", description: "Parent did:fidelis:<uuid>" },
+            child_name: { type: "string", description: "Child agent display name" },
+            child_role: { type: "string", enum: VALID_ROLES, description: "Child agent role" },
+            capabilities: {
+              type: "array",
+              items: { type: "string", enum: VALID_CAPABILITIES },
+              description: "Capabilities (must be subset of parent)",
+            },
+            ttl_hours: { type: "number", description: "TTL in hours (capped at parent remaining)" },
+          },
+          required: ["parent_agent_id", "child_name", "child_role", "capabilities"],
+        },
+      },
+      {
+        name: "fidelis_identity_cascade_revoke",
+        description: "Revoke a parent credential and all descendants recursively.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            parent_agent_id: { type: "string", description: "Parent did:fidelis:<uuid> to revoke" },
+            reason: { type: "string", description: "Reason for revocation" },
+          },
+          required: ["parent_agent_id", "reason"],
+        },
+      },
+      {
+        name: "fidelis_identity_tree",
+        description: "Get the full credential tree rooted at an agentId.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            agent_id: { type: "string", description: "Root did:fidelis:<uuid>" },
+          },
+          required: ["agent_id"],
+        },
+      },
+      // -- Why Layer tool (v0.6.0) --------------------------------------------
+      {
+        name: "fidelis_why_assess",
+        description:
+          "Manually trigger a Why Layer assessment on the current audit event window. Returns a CoE analysis with anomaly detection, intent inference, and threat narrative.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            agent_id: { type: "string", description: "Filter to specific agent (optional)" },
+            window_minutes: { type: "number", description: "Time window in minutes (default: 60)" },
+            window_size: { type: "number", description: "Max entries to analyze (default: 20)" },
+          },
         },
       },
     ],
@@ -411,10 +481,198 @@ async function main(): Promise<void> {
         return { content: [{ type: "text" as const, text: `Agent ${revokeId} revoked: ${reason}` }] };
       }
 
+      // -- Delegation tools (v0.6.0) ------------------------------------------
+
+      case "fidelis_identity_delegate": {
+        const parentId = args?.parent_agent_id as string;
+        const childName = args?.child_name as string;
+        const childRole = args?.child_role as AgentRole;
+        const caps = args?.capabilities as AgentCapability[];
+        const ttlHours = typeof args?.ttl_hours === "number" ? args.ttl_hours : undefined;
+
+        if (!parentId || !childName || !childRole || !caps || !Array.isArray(caps)) {
+          return { content: [{ type: "text" as const, text: "Error: parent_agent_id, child_name, child_role, and capabilities are required" }], isError: true };
+        }
+
+        try {
+          const delegationReq: DelegationRequest = {
+            parentAgentId: parentId,
+            childName,
+            childRole,
+            capabilities: caps,
+            ttlHours,
+          };
+          const child = registry.delegate(delegationReq);
+
+          audit.log("CONFIG_LOADED", {
+            meta: {
+              event_detail: "AGENT_DELEGATED",
+              parent_agent_id: parentId,
+              child_agent_id: child.agentId,
+              child_name: child.name,
+              child_role: child.role,
+              capabilities: child.capabilities,
+              delegation_depth: isDelegatedCredential(child) ? child.delegation.depth : 0,
+              expires_at: child.expiresAt,
+            },
+          });
+
+          const safe = sanitizeCredential(child);
+          return { content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${(error as Error).message}` }], isError: true };
+        }
+      }
+
+      case "fidelis_identity_cascade_revoke": {
+        const cascadeParentId = args?.parent_agent_id as string;
+        const cascadeReason = args?.reason as string;
+
+        if (!cascadeParentId || !cascadeReason) {
+          return { content: [{ type: "text" as const, text: "Error: parent_agent_id and reason are required" }], isError: true };
+        }
+
+        // Revoke the parent itself first
+        const parentRevoked = registry.revoke(cascadeParentId, cascadeReason);
+        if (!parentRevoked) {
+          return { content: [{ type: "text" as const, text: `Error: agent ${cascadeParentId} not found` }], isError: true };
+        }
+
+        // Cascade to descendants
+        const revokedIds = registry.cascadeRevoke(cascadeParentId, cascadeReason);
+
+        // Clear session agent if revoked
+        if (sessionAgentId === cascadeParentId || revokedIds.includes(sessionAgentId || "")) {
+          sessionAgentId = undefined;
+        }
+
+        audit.log("CONFIG_LOADED", {
+          meta: {
+            event_detail: "CASCADE_REVOCATION",
+            parent_agent_id: cascadeParentId,
+            reason: cascadeReason,
+            revoked_count: revokedIds.length + 1,
+            revoked_ids: [cascadeParentId, ...revokedIds],
+          },
+        });
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              revokedCount: revokedIds.length + 1,
+              revokedIds: [cascadeParentId, ...revokedIds],
+            }, null, 2),
+          }],
+        };
+      }
+
+      case "fidelis_identity_tree": {
+        const treeRootId = args?.agent_id as string;
+        if (!treeRootId) {
+          return { content: [{ type: "text" as const, text: "Error: agent_id is required" }], isError: true };
+        }
+
+        const rootCred = registry.get(treeRootId);
+        if (!rootCred) {
+          return { content: [{ type: "text" as const, text: `Error: agent ${treeRootId} not found` }], isError: true };
+        }
+
+        const children = registry.getChildren(treeRootId).map(sanitizeCredential);
+        const descendants = registry.getDescendants(treeRootId).map(sanitizeCredential);
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              root: sanitizeCredential(rootCred),
+              children,
+              descendants,
+            }, null, 2),
+          }],
+        };
+      }
+
+      // -- Why Layer tool (v0.6.0) --------------------------------------------
+
+      case "fidelis_why_assess": {
+        const whyAgentId = args?.agent_id as string | undefined;
+        const windowMin = typeof args?.window_minutes === "number" ? args.window_minutes : whyConfig.windowMinutes;
+        const windowSz = typeof args?.window_size === "number" ? args.window_size : whyConfig.windowSize;
+
+        // Build event window from recent entries
+        let windowEntries = [...recentAuditEntries];
+        if (whyAgentId) {
+          windowEntries = windowEntries.filter((e) => e.agentId === whyAgentId);
+        }
+        // Time filter
+        const cutoff = new Date(Date.now() - windowMin * 60 * 1000);
+        windowEntries = windowEntries.filter((e) => new Date(e.timestamp) >= cutoff);
+        // Size cap
+        windowEntries = windowEntries.slice(-windowSz);
+
+        const window: AuditEventWindow = {
+          entries: windowEntries,
+          agentId: whyAgentId,
+          windowMinutes: windowMin,
+        };
+
+        const assessment = await assessWindow(window, whyConfig);
+        lastWhyAssessmentTime = new Date();
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify(assessment, null, 2),
+          }],
+        };
+      }
+
       default:
         return { content: [{ type: "text" as const, text: `Unknown tool: ${name}` }], isError: true };
     }
   });
+
+  // =========================================================================
+  // Why Layer integration — track entries and auto-trigger
+  // =========================================================================
+
+  // Wrap audit.log to auto-track entries for the Why Layer
+  const _originalAuditLog = audit.log.bind(audit);
+  audit.log = (...args: Parameters<typeof audit.log>): AuditEntry => {
+    const entry = _originalAuditLog(...args);
+    trackAndTriggerWhy(entry);
+    return entry;
+  };
+
+  function trackAndTriggerWhy(entry: AuditEntry): void {
+    recentAuditEntries.push(entry);
+    // Keep window bounded
+    if (recentAuditEntries.length > whyConfig.windowSize * 2) {
+      recentAuditEntries.splice(0, recentAuditEntries.length - whyConfig.windowSize);
+    }
+
+    // Check if Why Layer should trigger (non-blocking)
+    const trigger = shouldTrigger(entry, recentAuditEntries, triggerConfig, lastWhyAssessmentTime);
+    if (trigger && whyConfig.enabled) {
+      const window: AuditEventWindow = {
+        entries: [...recentAuditEntries].slice(-whyConfig.windowSize),
+        agentId: entry.agentId,
+      };
+
+      // Fire and forget — never block the gatekeeper
+      assessWindow(window, whyConfig)
+        .then((assessment) => {
+          lastWhyAssessmentTime = new Date();
+          // Send enriched Telegram alert
+          const alertMsg = formatTelegramAlert(assessment, entry);
+          telegram.sendReply(alertMsg, { broadcast: true }).catch(() => {});
+        })
+        .catch(() => {
+          // Why Layer failure is non-fatal
+        });
+    }
+  }
 
   // =========================================================================
   // Permission request handler (with attestation)
