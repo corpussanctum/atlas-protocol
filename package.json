@@ -1,6 +1,6 @@
 {
   "name": "fidelis-channel",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Telegram approval channel for Claude Code with fail-closed permission relay, policy rules, and tamper-evident audit logging.",
   "type": "module",
   "main": "dist/index.js",

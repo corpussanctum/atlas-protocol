@@ -38,6 +38,8 @@ function makeConfig(overrides: Partial<TriggerConfig> = {}): TriggerConfig {
       "Defense Evasion",
     ],
     cooldownSeconds: overrides.cooldownSeconds ?? 30,
+    driftDetectionEnabled: overrides.driftDetectionEnabled ?? true,
+    driftSeverityThreshold: overrides.driftSeverityThreshold ?? "medium",
   };
 }
 

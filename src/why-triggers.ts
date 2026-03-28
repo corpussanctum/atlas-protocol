@@ -19,12 +19,15 @@ export type WhyTrigger =
   | "HIGH_RISK_TECHNIQUE"
   | "IDENTITY_ANOMALY"
   | "CASCADE_REVOCATION"
+  | "BASELINE_DRIFT"
   | "MANUAL";
 
 export interface TriggerConfig {
   denyThreshold: number;
   highRiskTactics: string[];
   cooldownSeconds: number;
+  driftDetectionEnabled: boolean;
+  driftSeverityThreshold: "low" | "medium" | "high" | "critical";
 }
 
 // ---------------------------------------------------------------------------
@@ -49,6 +52,10 @@ export function loadTriggerConfig(): TriggerConfig {
       : defaultTactics,
     cooldownSeconds:
       parseInt(process.env.WHY_TRIGGER_COOLDOWN_SECONDS ?? "30", 10) || 30,
+    driftDetectionEnabled:
+      process.env.WHY_TRIGGER_DRIFT_ENABLED !== "false",
+    driftSeverityThreshold:
+      (process.env.WHY_TRIGGER_DRIFT_SEVERITY as TriggerConfig["driftSeverityThreshold"]) ?? "medium",
   };
 }
 
@@ -161,6 +168,15 @@ export function formatTelegramAlert(
     `<b>Action:</b> ${action}`,
     `<b>Window:</b> ${escapeHtml(assessment.windowSummary)}`,
   ];
+
+  // Add drift section if present
+  if (assessment.researchArtifact.driftDetected && assessment.researchArtifact.driftSignals?.length) {
+    lines.push("");
+    lines.push(`\u{1F4CA} <b>BASELINE DRIFT:</b>`);
+    for (const sig of assessment.researchArtifact.driftSignals) {
+      lines.push(`  • ${escapeHtml(sig)}`);
+    }
+  }
 
   return lines.join("\n");
 }

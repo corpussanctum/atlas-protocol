@@ -2,6 +2,59 @@
 
 All notable changes to Fidelis Channel are documented in this file.
 
+## [0.7.0] - 2026-03-28
+
+### Added
+- **Persistent Behavioral Baselines** — per-agent profiles that accumulate across sessions
+  - `BaselineProfile` with 8 behavioral dimensions: risk distribution, technique frequencies,
+    capability usage, temporal patterns, delegation behavior, Why Layer history
+  - 4-tier maturity model: insufficient (<10 sessions) → developing → established → mature (200+)
+  - `RiskDistribution` with min/max/mean/p50/p75/p95/p99/stddev from accumulated observations
+  - `TemporalProfile` with hourly and daily activity distributions
+  - Auto-calculated drift thresholds (mean ± 2σ upper bound, ± 3σ critical)
+- **Drift Detection** — 5 behavioral drift dimensions:
+  - `RISK_SCORE_ELEVATED` — current risk exceeds baseline threshold
+  - `NEW_TECHNIQUE_OBSERVED` — MITRE technique not in baseline
+  - `CAPABILITY_DENY_SPIKE` — deny ratio for a capability >> baseline
+  - `TEMPORAL_ANOMALY` — activity at unusual hours
+  - `VOLUME_SPIKE` — event rate >> baseline average
+  - Each signal includes severity, deviation factor, and human-readable description
+- **Baseline-Aware Why Layer** — anomaly expert prompt now includes baseline context:
+  - Historical risk scores, common techniques, temporal patterns
+  - Expert explicitly compares current behavior against longitudinal baseline
+  - Drift assessment integrated into `synthesize()` — elevates risk when drift detected
+- **ResearchArtifact longitudinal fields**:
+  - `baselineMaturity`, `baselineSessions`, `driftDetected`, `driftSignals`
+  - `riskScoreVsBaseline` with current mean, baseline mean, and deviation factor
+- **Baseline Store** — JSON-file persistence (one file per agent, chmod 600, atomic writes)
+- **3 new MCP tools**:
+  - `fidelis_baseline_get` — retrieve full baseline profile for an agent
+  - `fidelis_baseline_drift` — run drift detection against current window
+  - `fidelis_baseline_list` — list profiles with maturity/role filters
+- **BASELINE_DRIFT trigger** — Why Layer auto-fires when drift detected
+- **Telegram alerts** enriched with baseline drift section when signals present
+- Fire-and-forget baseline ingestion in audit.log wrapper (never blocks gatekeeper)
+- New source files: `baseline-types.ts`, `baseline-store.ts`, `baseline-engine.ts`
+- New test suites: `baseline-store.test.ts`, `baseline-engine.test.ts`, `baseline-integration.test.ts`
+- 44 new tests (359 total, all passing)
+
+### Changed
+- Version bumped to 0.7.0 (persistent behavioral baselines release)
+- `assessWindow()` now accepts optional `BaselineProfile` parameter
+- `runExpert()` prepends baseline context to anomaly expert system prompt
+- `synthesize()` accepts optional `DriftAssessment` and `BaselineProfile`
+- `WhyTrigger` type extended with `BASELINE_DRIFT`
+- `TriggerConfig` extended with `driftDetectionEnabled` and `driftSeverityThreshold`
+- Auto-trigger hook ingests every audit entry into baseline (fire-and-forget)
+- Why Layer assessments automatically ingested into agent baselines
+
+### Security
+- Baseline profiles store derived statistics only — no raw audit data (privacy)
+- Baseline files written with chmod 600 (owner read/write only)
+- Atomic file writes (tmp + rename) prevent corruption
+- Internal `_riskScores` array stripped from MCP tool responses
+- Drift thresholds not exposed unless specifically requested
+
 ## [0.6.0] - 2026-03-28
 
 ### Added

@@ -14,6 +14,8 @@
  */
 
 import type { AuditEntry } from "./audit-log.js";
+import type { BaselineProfile, DriftAssessment } from "./baseline-types.js";
+import { detectDrift, getBaselineContext } from "./baseline-engine.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,6 +53,16 @@ export interface ResearchArtifact {
   riskProgression: number[];
   anomalySignals: string[];
   temporalPattern: "burst" | "steady" | "escalating" | "idle";
+  // Longitudinal fields (v0.7.0 — populated when baseline available)
+  baselineMaturity?: string;
+  baselineSessions?: number;
+  driftDetected?: boolean;
+  driftSignals?: string[];
+  riskScoreVsBaseline?: {
+    currentMean: number;
+    baselineMean: number;
+    deviationFactor: number;
+  };
 }
 
 export interface WhyAssessment {
@@ -162,8 +174,14 @@ export async function runExpert(
   expert: "anomaly" | "intent" | "threat",
   entries: AuditEntry[],
   config: WhyEngineConfig,
+  baselineContext?: string,
 ): Promise<ExpertAssessment> {
-  const systemPrompt = EXPERT_PROMPTS[expert];
+  // Prepend baseline context to anomaly expert prompt when available
+  let systemPrompt = EXPERT_PROMPTS[expert];
+  if (baselineContext && expert === "anomaly") {
+    systemPrompt = baselineContext + "\n\n" + systemPrompt +
+      " If baseline context is provided above, explicitly compare current behavior against baseline. Call out any dimensions where current behavior deviates from the established pattern. If no baseline is available, reason only from the current window.";
+  }
   const prompt = serializeWindow(entries);
 
   let raw: string;
@@ -320,6 +338,8 @@ function classifyTemporalPattern(
 export function synthesize(
   experts: ExpertAssessment[],
   entries: AuditEntry[],
+  driftAssessment?: DriftAssessment,
+  baseline?: BaselineProfile,
 ): Omit<WhyAssessment, "expertAssessments"> {
   const anomalyExpert = experts.find((e) => e.expert === "anomaly");
   const intentExpert = experts.find((e) => e.expert === "intent");
@@ -380,13 +400,69 @@ export function synthesize(
 
   const researchArtifact = buildResearchArtifact(entries);
 
+  // Enrich with baseline longitudinal data (v0.7.0)
+  if (baseline && baseline.maturityLevel !== "insufficient") {
+    researchArtifact.baselineMaturity = baseline.maturityLevel;
+    researchArtifact.baselineSessions = baseline.totalSessions;
+    const currentMean = overallRiskScore;
+    const baselineMean = baseline.riskDistribution.mean;
+    const stddev = baseline.riskDistribution.stddev || 1;
+    researchArtifact.riskScoreVsBaseline = {
+      currentMean,
+      baselineMean,
+      deviationFactor: Math.round(((currentMean - baselineMean) / stddev) * 100) / 100,
+    };
+  }
+
+  // Drift integration
+  let finalOverallRisk = overallRisk;
+  let finalAnomalyDetected = anomalyDetected;
+  let finalSynthesis = synthesis;
+
+  if (driftAssessment?.driftDetected) {
+    researchArtifact.driftDetected = true;
+    researchArtifact.driftSignals = driftAssessment.signals.map(
+      (s) => `${s.dimension}: ${s.description}`
+    );
+    finalAnomalyDetected = true;
+
+    // Elevate risk if drift severity is high or critical
+    if (
+      driftAssessment.overallDriftSeverity === "critical" &&
+      finalOverallRisk !== "critical"
+    ) {
+      finalOverallRisk = "critical";
+    } else if (
+      driftAssessment.overallDriftSeverity === "high" &&
+      finalOverallRisk !== "critical" &&
+      finalOverallRisk !== "high"
+    ) {
+      finalOverallRisk = "high";
+    }
+
+    const driftSummary = driftAssessment.signals
+      .map((s) => s.description)
+      .join("; ");
+    finalSynthesis += ` Baseline drift detected: ${driftSummary}.`;
+  }
+
+  // Recalculate recommended action based on potentially elevated risk
+  const finalAction: WhyAssessment["recommendedAction"] =
+    finalOverallRisk === "critical"
+      ? "block"
+      : finalOverallRisk === "high"
+        ? "escalate"
+        : finalOverallRisk === "medium"
+          ? "monitor"
+          : "allow";
+
   return {
     windowSummary,
-    synthesis,
-    overallRisk,
+    synthesis: finalSynthesis,
+    overallRisk: finalOverallRisk,
     overallRiskScore,
-    recommendedAction,
-    anomalyDetected,
+    recommendedAction: finalAction,
+    anomalyDetected: finalAnomalyDetected,
     inferredIntent,
     threatNarrative,
     generatedAt: new Date().toISOString(),
@@ -426,6 +502,7 @@ export function stubAssessment(
 export async function assessWindow(
   window: AuditEventWindow,
   config?: WhyEngineConfig,
+  baseline?: BaselineProfile,
 ): Promise<WhyAssessment> {
   const cfg = config ?? loadWhyConfig();
 
@@ -434,6 +511,9 @@ export async function assessWindow(
   }
 
   try {
+    // Get baseline context for expert prompt injection
+    const baseCtx = getBaselineContext(baseline);
+
     const expertTypes: Array<"anomaly" | "intent" | "threat"> = [
       "anomaly",
       "intent",
@@ -444,16 +524,27 @@ export async function assessWindow(
 
     if (cfg.parallelExperts) {
       assessments = await Promise.all(
-        expertTypes.map((expert) => runExpert(expert, window.entries, cfg)),
+        expertTypes.map((expert) =>
+          runExpert(expert, window.entries, cfg, baseCtx || undefined),
+        ),
       );
     } else {
       assessments = [];
       for (const expert of expertTypes) {
-        assessments.push(await runExpert(expert, window.entries, cfg));
+        assessments.push(
+          await runExpert(expert, window.entries, cfg, baseCtx || undefined),
+        );
       }
     }
 
-    const base = synthesize(assessments, window.entries);
+    // Run drift detection if baseline is sufficient
+    let drift: DriftAssessment | undefined;
+    const anomalyExpert = assessments.find((e) => e.expert === "anomaly");
+    if (baseline && baseline.maturityLevel !== "insufficient" && anomalyExpert) {
+      drift = detectDrift(window.entries, anomalyExpert, baseline);
+    }
+
+    const base = synthesize(assessments, window.entries, drift, baseline);
     return {
       ...base,
       expertAssessments: assessments,

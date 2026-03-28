@@ -36,6 +36,9 @@ import { assessWindow, loadWhyConfig, stubAssessment } from "./why-engine.js";
 import type { WhyAssessment, AuditEventWindow } from "./why-engine.js";
 import { shouldTrigger, formatTelegramAlert, loadTriggerConfig } from "./why-triggers.js";
 import type { WhyTrigger } from "./why-triggers.js";
+import { BaselineStore } from "./baseline-store.js";
+import { ingestEntry as baselineIngestEntry, ingestAssessment as baselineIngestAssessment, detectDrift, getBaselineContext } from "./baseline-engine.js";
+import type { DriftAssessment } from "./baseline-types.js";
 
 const VERSION = "0.5.0";
 
@@ -73,6 +76,9 @@ async function main(): Promise<void> {
 
   // Session-level active agent ID (set by fidelis_identity_register)
   let sessionAgentId: string | undefined;
+
+  // Baseline store
+  const baselineStore = new BaselineStore(config.data_dir);
 
   // Why Layer state
   const whyConfig = loadWhyConfig();
@@ -285,6 +291,41 @@ async function main(): Promise<void> {
             agent_id: { type: "string", description: "Root did:fidelis:<uuid>" },
           },
           required: ["agent_id"],
+        },
+      },
+      // -- Baseline tools (v0.7.0) ---------------------------------------------
+      {
+        name: "fidelis_baseline_get",
+        description: "Get the behavioral baseline profile for an agent.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            agent_id: { type: "string", description: "The did:fidelis:<uuid>" },
+          },
+          required: ["agent_id"],
+        },
+      },
+      {
+        name: "fidelis_baseline_drift",
+        description: "Run drift detection against an agent's baseline using the current audit window.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            agent_id: { type: "string", description: "The did:fidelis:<uuid>" },
+            window_minutes: { type: "number", description: "Time window in minutes (default: 60)" },
+          },
+          required: ["agent_id"],
+        },
+      },
+      {
+        name: "fidelis_baseline_list",
+        description: "List all behavioral baseline profiles, optionally filtered.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            maturity: { type: "string", enum: ["insufficient", "developing", "established", "mature"], description: "Filter by maturity level" },
+            role: { type: "string", description: "Filter by agent role" },
+          },
         },
       },
       // -- Why Layer tool (v0.6.0) --------------------------------------------
@@ -595,6 +636,72 @@ async function main(): Promise<void> {
 
       // -- Why Layer tool (v0.6.0) --------------------------------------------
 
+      // -- Baseline tools (v0.7.0) ------------------------------------------
+
+      case "fidelis_baseline_get": {
+        const baselineAgentId = args?.agent_id as string;
+        if (!baselineAgentId) {
+          return { content: [{ type: "text" as const, text: "Error: agent_id is required" }], isError: true };
+        }
+        const profile = await baselineStore.get(baselineAgentId);
+        if (!profile) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ error: "NO_BASELINE", message: `No baseline exists for ${baselineAgentId}` }) }] };
+        }
+        // Omit internal _riskScores for external display
+        const { _riskScores, ...display } = profile;
+        return { content: [{ type: "text" as const, text: JSON.stringify(display, null, 2) }] };
+      }
+
+      case "fidelis_baseline_drift": {
+        const driftAgentId = args?.agent_id as string;
+        if (!driftAgentId) {
+          return { content: [{ type: "text" as const, text: "Error: agent_id is required" }], isError: true };
+        }
+        const driftBaseline = await baselineStore.get(driftAgentId);
+        if (!driftBaseline) {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ driftDetected: false, recommendation: "allow", note: "No baseline exists for this agent" }, null, 2) }] };
+        }
+        if (driftBaseline.maturityLevel === "insufficient") {
+          return { content: [{ type: "text" as const, text: JSON.stringify({ driftDetected: false, recommendation: "allow", note: "Baseline insufficient — need 10+ sessions" }, null, 2) }] };
+        }
+
+        const driftWindowMin = typeof args?.window_minutes === "number" ? args.window_minutes : 60;
+        let driftEntries = [...recentAuditEntries]
+          .filter((e) => e.agentId === driftAgentId)
+          .filter((e) => new Date(e.timestamp) >= new Date(Date.now() - driftWindowMin * 60 * 1000));
+
+        // Use a synthetic expert assessment from the window's risk score
+        const avgRisk = driftEntries.length > 0
+          ? driftEntries.reduce((sum, e) => {
+              const flags = (e.policy_result?.anomaly_flags ?? []).length;
+              return sum + Math.min(100, flags * 10);
+            }, 0) / driftEntries.length
+          : 0;
+
+        const syntheticExpert: import("./why-engine.js").ExpertAssessment = {
+          expert: "anomaly",
+          finding: "Synthetic assessment for drift detection",
+          confidence: "medium",
+          signals: [],
+          riskScore: Math.round(avgRisk),
+        };
+
+        const driftResult = detectDrift(driftEntries, syntheticExpert, driftBaseline);
+        return { content: [{ type: "text" as const, text: JSON.stringify(driftResult, null, 2) }] };
+      }
+
+      case "fidelis_baseline_list": {
+        const matFilter = args?.maturity as string | undefined;
+        const roleFilter = args?.role as string | undefined;
+        const allBaselines = await baselineStore.list({
+          maturity: matFilter as any,
+          role: roleFilter,
+        });
+        // Return summary fields only — omit whyHistory and _riskScores for size
+        const summaries = allBaselines.map(({ whyHistory, _riskScores, ...rest }) => rest);
+        return { content: [{ type: "text" as const, text: JSON.stringify(summaries, null, 2) }] };
+      }
+
       case "fidelis_why_assess": {
         const whyAgentId = args?.agent_id as string | undefined;
         const windowMin = typeof args?.window_minutes === "number" ? args.window_minutes : whyConfig.windowMinutes;
@@ -605,10 +712,8 @@ async function main(): Promise<void> {
         if (whyAgentId) {
           windowEntries = windowEntries.filter((e) => e.agentId === whyAgentId);
         }
-        // Time filter
         const cutoff = new Date(Date.now() - windowMin * 60 * 1000);
         windowEntries = windowEntries.filter((e) => new Date(e.timestamp) >= cutoff);
-        // Size cap
         windowEntries = windowEntries.slice(-windowSz);
 
         const window: AuditEventWindow = {
@@ -617,8 +722,18 @@ async function main(): Promise<void> {
           windowMinutes: windowMin,
         };
 
-        const assessment = await assessWindow(window, whyConfig);
+        // Load baseline for enrichment
+        const whyBaseline = whyAgentId
+          ? await baselineStore.get(whyAgentId)
+          : undefined;
+
+        const assessment = await assessWindow(window, whyConfig, whyBaseline ?? undefined);
         lastWhyAssessmentTime = new Date();
+
+        // Ingest assessment into baseline
+        if (whyAgentId) {
+          baselineIngestAssessment(whyAgentId, assessment, "MANUAL", baselineStore).catch(() => {});
+        }
 
         return {
           content: [{
@@ -652,6 +767,9 @@ async function main(): Promise<void> {
       recentAuditEntries.splice(0, recentAuditEntries.length - whyConfig.windowSize);
     }
 
+    // Fire-and-forget baseline ingest — never block the gatekeeper
+    baselineIngestEntry(entry, baselineStore).catch(() => {});
+
     // Check if Why Layer should trigger (non-blocking)
     const trigger = shouldTrigger(entry, recentAuditEntries, triggerConfig, lastWhyAssessmentTime);
     if (trigger && whyConfig.enabled) {
@@ -660,10 +778,21 @@ async function main(): Promise<void> {
         agentId: entry.agentId,
       };
 
+      // Load baseline for this agent, then assess with it
+      const agentId = entry.agentId;
+      const baselinePromise = agentId
+        ? baselineStore.get(agentId)
+        : Promise.resolve(undefined);
+
       // Fire and forget — never block the gatekeeper
-      assessWindow(window, whyConfig)
+      baselinePromise
+        .then((baseline) => assessWindow(window, whyConfig, baseline ?? undefined))
         .then((assessment) => {
           lastWhyAssessmentTime = new Date();
+          // Ingest assessment into baseline (fire-and-forget)
+          if (agentId) {
+            baselineIngestAssessment(agentId, assessment, trigger, baselineStore).catch(() => {});
+          }
           // Send enriched Telegram alert
           const alertMsg = formatTelegramAlert(assessment, entry);
           telegram.sendReply(alertMsg, { broadcast: true }).catch(() => {});
