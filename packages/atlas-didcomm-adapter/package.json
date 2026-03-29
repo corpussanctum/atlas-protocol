@@ -1,0 +1,22 @@
+{
+  "name": "@corpussanctum/atlas-didcomm-adapter",
+  "version": "0.1.0",
+  "description": "DIDComm integration adapter for the Atlas Protocol gatekeeper",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
