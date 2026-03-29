@@ -92,6 +92,8 @@ did:atlas:<uuid>
 
 Where `<uuid>` is a RFC 4122 v4 UUID. Example: `did:atlas:550e8400-e29b-41d4-a716-446655440000`.
 
+> **Note:** The current `did:atlas` method is locally-scoped to a single gatekeeper operator. A future version will define namespace syntax and cross-operator resolution semantics to support federated deployments.
+
 ### 4.2 DID document
 
 A `did:atlas` identifier resolves to an `AgentCredential` object within the local identity registry. There is no external resolution endpoint — `did:atlas` is a locally-scoped method designed for single-operator environments.

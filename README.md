@@ -393,7 +393,7 @@ This is an optional hardening layer. Atlas works fully without it.
 ```
 src/
 ├── index.ts               # MCP server, 20 tools, permission handler (5-step pipeline)
-├── config.ts              # Configuration loader + 97 default rules
+├── config.ts              # Configuration loader + 96 default rules
 ├── policy-engine.ts       # 96 rules, anomaly detection, velocity tracking
 ├── policy-test-runner.ts  # Runtime regression test fixtures + runner
 ├── audit-log.ts           # SHA3-256 chain + ML-DSA-65 + HMAC + identity fields
