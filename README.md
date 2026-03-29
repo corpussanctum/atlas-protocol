@@ -10,15 +10,15 @@ Atlas is designed around a single assumption: **the agent might be compromised**
 
 ```
               ┌─────────────────────────────────────────────────────────────────┐
-              │                       Atlas Gatekeeper                         │
+              │                       Atlas Gatekeeper                          │
               │                                                                 │
   Agent ─────►│  Identity ──► Policy ──► Quiet ──► Break ──► Telegram ──► Verdict
               │  Attestation   Engine    Mode?     Glass?     Relay      Allow/ │
-              │                                                          Deny  │
+              │                                                          Deny   │
               │     ▼            ▼         ▼         ▼          ▼          ▼    │
               │  ┌──────────────────────────────────────────────────────────┐   │
-              │  │              Quantum Audit Log (+ rotation)             │   │
-              │  │   SHA3-256 chain + ML-DSA-65 sigs + ATT&CK + ID        │   │
+              │  │              Quantum Audit Log (+ rotation)              │   │
+              │  │   SHA3-256 chain + ML-DSA-65 sigs + ATT&CK + ID          │   │
               │  └──────────────────────────────────────────────────────────┘   │
               │                          ▼                                      │
               │                  Behavioral Baseline                            │
