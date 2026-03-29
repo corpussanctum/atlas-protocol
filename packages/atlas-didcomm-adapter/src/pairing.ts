@@ -14,6 +14,8 @@ import type {
   DidcommTransport,
   DidcommPermissionRequest,
   AtlasDidcommAuditEvent,
+  DelegationScope,
+  MessagingCapability,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -133,6 +135,7 @@ export class PairingManager {
       peerDid,
       alias: params.alias,
       trustState: "paired",
+      mappedAgentId: params.localAgentId,
       allowedMessageTypes: params.allowedMessageTypes ?? [],
       allowedDirections: params.allowedDirections ?? ["send", "receive"],
       createdAt: now,
@@ -231,6 +234,91 @@ export class PairingManager {
     };
     await this.atlas.logEvent(event);
 
+    return existing;
+  }
+
+  /**
+   * Bind a peer to a specific agent credential. Used after pairing when an
+   * orchestrator wants to assign a (possibly delegated) agent to service
+   * a particular peer.
+   */
+  async bindPeerToAgent(peerDid: string, agentId: string): Promise<PeerBinding> {
+    const existing = await this.peerStore.get(peerDid);
+    if (!existing) {
+      throw new Error(`Peer not found: ${peerDid}`);
+    }
+    if (existing.trustState !== "approved") {
+      throw new Error(`Cannot bind agent to peer in state: ${existing.trustState}`);
+    }
+
+    existing.mappedAgentId = agentId;
+    existing.updatedAt = new Date().toISOString();
+    await this.peerStore.put(existing);
+    return existing;
+  }
+
+  /**
+   * Set a delegation scope on a peer binding. This restricts the peer to
+   * communicate only through a delegated sub-agent with specific capabilities.
+   *
+   * The orchestrator calls this after:
+   * 1. Pairing and approving the peer
+   * 2. Delegating a sub-credential via Atlas registry.delegate()
+   * 3. Binding the delegation scope to this peer
+   *
+   * The inbound/outbound handlers enforce the scope before calling Atlas.
+   */
+  async setDelegationScope(
+    peerDid: string,
+    scope: DelegationScope,
+  ): Promise<PeerBinding> {
+    const existing = await this.peerStore.get(peerDid);
+    if (!existing) {
+      throw new Error(`Peer not found: ${peerDid}`);
+    }
+    if (existing.trustState !== "approved") {
+      throw new Error(`Cannot set delegation scope on peer in state: ${existing.trustState}`);
+    }
+
+    existing.delegationScope = scope;
+    existing.mappedAgentId = scope.delegatedAgentId;
+    existing.updatedAt = new Date().toISOString();
+    await this.peerStore.put(existing);
+
+    const event: AtlasDidcommAuditEvent = {
+      timestamp: existing.updatedAt,
+      event: "DIDCOMM_DELEGATED_SEND",
+      peerDid,
+      agentId: scope.delegatedAgentId,
+      verdict: "allow",
+      reason: `Delegation scope set: ${scope.grantedCapabilities.join(", ")}`,
+      metadata: {
+        parentAgentId: scope.parentAgentId,
+        delegatedAgentId: scope.delegatedAgentId,
+      },
+    };
+    await this.atlas.logEvent(event);
+
+    return existing;
+  }
+
+  /**
+   * Remove a delegation scope from a peer (reverts to direct agent or no agent).
+   */
+  async clearDelegationScope(peerDid: string): Promise<PeerBinding> {
+    const existing = await this.peerStore.get(peerDid);
+    if (!existing) {
+      throw new Error(`Peer not found: ${peerDid}`);
+    }
+
+    const oldScope = existing.delegationScope;
+    existing.delegationScope = undefined;
+    // If mappedAgentId was set by the scope, clear it too
+    if (oldScope && existing.mappedAgentId === oldScope.delegatedAgentId) {
+      existing.mappedAgentId = undefined;
+    }
+    existing.updatedAt = new Date().toISOString();
+    await this.peerStore.put(existing);
     return existing;
   }
 }
