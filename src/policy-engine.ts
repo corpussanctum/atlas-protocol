@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Policy Engine
+ * Atlas Protocol — Policy Engine
  *
  * Evaluates every permission request against:
  *   1. Identity context (consent tiers, sensitivity classifications, agent auth)
@@ -15,7 +15,7 @@
  *   - Auto-denies if a tool is forbidden at the active consent tier
  */
 
-import type { PolicyRule, FidelisConfig } from "./config.js";
+import type { PolicyRule, AtlasConfig } from "./config.js";
 import type { IdentityContext, SensitivityClassification, ConsentTier } from "./identity-provider.js";
 import { emptyIdentityContext } from "./identity-provider.js";
 
@@ -119,7 +119,7 @@ export class PolicyEngine {
   private readonly velocity: VelocityTracker;
   private identityContext: IdentityContext;
 
-  constructor(config: FidelisConfig, identityContext?: IdentityContext) {
+  constructor(config: AtlasConfig, identityContext?: IdentityContext) {
     this.rules = config.policy_rules;
     this.velocity = new VelocityTracker(60_000, config.velocity_limit_per_minute);
     this.identityContext = identityContext ?? emptyIdentityContext();

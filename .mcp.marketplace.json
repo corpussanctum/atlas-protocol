@@ -1,15 +1,15 @@
 {
   "mcpServers": {
-    "fidelis-channel": {
+    "atlas-protocol": {
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"],
       "env": {
         "NODE_PATH": "${CLAUDE_PLUGIN_DATA}/node_modules",
-        "FIDELIS_DATA_DIR": "${CLAUDE_PLUGIN_DATA}",
-        "FIDELIS_TELEGRAM_BOT_TOKEN": "${user_config.bot_token}",
-        "FIDELIS_TELEGRAM_CHAT_IDS": "${user_config.owner_chat_ids}",
-        "FIDELIS_HMAC_SECRET": "${user_config.audit_hmac_secret}",
-        "FIDELIS_AUDIT_LOG_PATH": "${CLAUDE_PLUGIN_DATA}/audit.jsonl"
+        "ATLAS_DATA_DIR": "${CLAUDE_PLUGIN_DATA}",
+        "ATLAS_TELEGRAM_BOT_TOKEN": "${user_config.bot_token}",
+        "ATLAS_TELEGRAM_CHAT_IDS": "${user_config.owner_chat_ids}",
+        "ATLAS_HMAC_SECRET": "${user_config.audit_hmac_secret}",
+        "ATLAS_AUDIT_LOG_PATH": "${CLAUDE_PLUGIN_DATA}/audit.jsonl"
       },
       "startupTimeout": 30000
     }

@@ -1,12 +1,12 @@
 /**
- * Fidelis Channel — Telegram Integration
+ * Atlas Protocol — Telegram Integration
  *
  * Lightweight Telegram Bot API client using native fetch (Node 20+).
  * Polls for incoming messages and forwards authorized messages to the channel.
  * Sends permission prompts and collects human verdicts.
  */
 
-import type { FidelisConfig } from "./config.js";
+import type { AtlasConfig } from "./config.js";
 
 interface TelegramUpdate {
   update_id: number;
@@ -63,7 +63,7 @@ export class TelegramBot {
   private pendingVerdicts: Map<string, PendingVerdict> = new Map();
   private lastInboundChatId: number | null = null;
 
-  constructor(config: FidelisConfig) {
+  constructor(config: AtlasConfig) {
     this.token = config.telegram_bot_token;
     this.allowedChatIds = new Set(config.telegram_allowed_chat_ids);
     this.baseUrl = `https://api.telegram.org/bot${this.token}`;
@@ -90,7 +90,7 @@ export class TelegramBot {
 
   async start(): Promise<void> {
     if (!this.token) {
-      console.error("[fidelis-telegram] No bot token configured. Telegram integration disabled.");
+      console.error("[atlas-telegram] No bot token configured. Telegram integration disabled.");
       return;
     }
     this.running = true;
@@ -120,7 +120,7 @@ export class TelegramBot {
         this.offset = update.update_id + 1;
       }
     } catch (err) {
-      console.error("[fidelis-telegram] Poll error:", err);
+      console.error("[atlas-telegram] Poll error:", err);
     }
 
     this.pollTimer = setTimeout(() => this.poll(), this.pollIntervalMs);
@@ -144,13 +144,13 @@ export class TelegramBot {
 
     if (this.allowedChatIds.size === 0) {
       console.error(
-        `[fidelis-telegram] Ignoring message from chat ${msg.chat.id}: no authorized chats configured`
+        `[atlas-telegram] Ignoring message from chat ${msg.chat.id}: no authorized chats configured`
       );
       return;
     }
 
     if (!this.allowedChatIds.has(msg.chat.id)) {
-      console.error(`[fidelis-telegram] Dropped message from unauthorized chat ${msg.chat.id}`);
+      console.error(`[atlas-telegram] Dropped message from unauthorized chat ${msg.chat.id}`);
       return;
     }
 
@@ -188,7 +188,7 @@ export class TelegramBot {
       try {
         handler(incoming);
       } catch (err) {
-        console.error("[fidelis-telegram] Handler error:", err);
+        console.error("[atlas-telegram] Handler error:", err);
       }
     }
   }
@@ -230,7 +230,7 @@ export class TelegramBot {
         : "";
 
     const prompt = [
-      `🔐 <b>FIDELIS PERMISSION REQUEST</b>`,
+      `🔐 <b>ATLAS PERMISSION REQUEST</b>`,
       ``,
       `<b>Tool:</b> <code>${escapeHtml(toolName)}</code>`,
       `<b>Action:</b> ${escapeHtml(description)}`,
@@ -244,7 +244,7 @@ export class TelegramBot {
 
     const chatIds = Array.from(this.allowedChatIds);
     if (chatIds.length === 0) {
-      console.error("[fidelis-telegram] No allowed chat IDs configured — auto-deny");
+      console.error("[atlas-telegram] No allowed chat IDs configured — auto-deny");
       return { decision: "timeout" };
     }
 
@@ -254,12 +254,12 @@ export class TelegramBot {
         await this.sendMessage(chatId, prompt);
         delivered += 1;
       } catch (err) {
-        console.error(`[fidelis-telegram] Failed to send to chat ${chatId}:`, err);
+        console.error(`[atlas-telegram] Failed to send to chat ${chatId}:`, err);
       }
     }
 
     if (delivered === 0) {
-      console.error("[fidelis-telegram] Permission prompt could not be delivered to any authorized chat — auto-deny");
+      console.error("[atlas-telegram] Permission prompt could not be delivered to any authorized chat — auto-deny");
       return { decision: "timeout" };
     }
 

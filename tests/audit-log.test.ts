@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Audit Log (v0.4.0)
+ * Tests for Atlas Protocol — Audit Log (v0.4.0)
  *
  * Covers: basic logging, SHA3-256 hash chain, HMAC signing,
  * ML-DSA-65 post-quantum signatures, MITRE ATT&CK enrichment,
@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { createHash, createHmac } from "node:crypto";
 import { AuditLogger } from "../src/audit-log.js";
 import { QuantumSigner } from "../src/quantum-signer.js";
-import type { FidelisConfig } from "../src/config.js";
+import type { AtlasConfig } from "../src/config.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -23,12 +23,12 @@ import type { FidelisConfig } from "../src/config.js";
 let tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "fidelis-audit-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "atlas-audit-test-"));
   tempDirs.push(dir);
   return dir;
 }
 
-function makeConfig(overrides: Partial<FidelisConfig> = {}): FidelisConfig {
+function makeConfig(overrides: Partial<AtlasConfig> = {}): AtlasConfig {
   const dir = makeTempDir();
   return {
     data_dir: dir,

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Fidelis Channel are documented in this file.
+All notable changes to Atlas Protocol are documented in this file.
 
 ## [0.7.0] - 2026-03-28
 
@@ -28,9 +28,9 @@ All notable changes to Fidelis Channel are documented in this file.
   - `riskScoreVsBaseline` with current mean, baseline mean, and deviation factor
 - **Baseline Store** — JSON-file persistence (one file per agent, chmod 600, atomic writes)
 - **3 new MCP tools**:
-  - `fidelis_baseline_get` — retrieve full baseline profile for an agent
-  - `fidelis_baseline_drift` — run drift detection against current window
-  - `fidelis_baseline_list` — list profiles with maturity/role filters
+  - `atlas_baseline_get` — retrieve full baseline profile for an agent
+  - `atlas_baseline_drift` — run drift detection against current window
+  - `atlas_baseline_list` — list profiles with maturity/role filters
 - **BASELINE_DRIFT trigger** — Why Layer auto-fires when drift detected
 - **Telegram alerts** enriched with baseline drift section when signals present
 - Fire-and-forget baseline ingestion in audit.log wrapper (never blocks gatekeeper)
@@ -70,9 +70,9 @@ All notable changes to Fidelis Channel are documented in this file.
   - `cascadeRevoke()` — revoking a parent cascades to all descendants
   - `issueCredentialWithKey()` — returns agent secret key for delegation support
 - **3 new MCP tools** for delegation:
-  - `fidelis_identity_delegate` — issue scoped child credential
-  - `fidelis_identity_cascade_revoke` — revoke parent + all descendants
-  - `fidelis_identity_tree` — view credential hierarchy
+  - `atlas_identity_delegate` — issue scoped child credential
+  - `atlas_identity_cascade_revoke` — revoke parent + all descendants
+  - `atlas_identity_tree` — view credential hierarchy
 - **Identity Registry delegation support**:
   - `delegate()`, `getChildren()`, `getDescendants()`, `cascadeRevoke()`
   - `children` index persisted in registry JSON for efficient tree walks
@@ -92,7 +92,7 @@ All notable changes to Fidelis Channel are documented in this file.
   - IDENTITY_ANOMALY (unregistered agent, expired credential)
   - CASCADE_REVOCATION events
   - Cooldown logic prevents over-triggering (default: 30s)
-- **1 new MCP tool**: `fidelis_why_assess` — manual Why Layer assessment
+- **1 new MCP tool**: `atlas_why_assess` — manual Why Layer assessment
 - **Telegram alerts enriched** with Why Layer synthesis and risk scores
 - **AuditEntry extensions**: `whyTriggered`, `whyTriggerReason` fields
 - Auto-tracking of audit entries for Why Layer event windows
@@ -117,7 +117,7 @@ All notable changes to Fidelis Channel are documented in this file.
 
 ### Added
 - **Agent Identity Attestation** — every agent must present a signed credential
-  - DID-format agent IDs (`did:fidelis:<uuid>`)
+  - DID-format agent IDs (`did:atlas:<uuid>`)
   - ML-DSA-65 issuer-signed credentials with SHA3-256 credential hashes
   - Per-agent ML-DSA-65 keypairs generated at registration
   - Role-based access: `claude-code`, `orchestrator`, `tool-caller`, `observer`, `admin`
@@ -133,10 +133,10 @@ All notable changes to Fidelis Channel are documented in this file.
   - Tool-to-capability mapping (Read→file:read, Bash→shell:exec, etc.)
   - All audit entries enriched with identity fields
 - **4 new MCP tools**:
-  - `fidelis_identity_register` — issue a signed agent credential
-  - `fidelis_identity_verify` — verify an agent's credential status
-  - `fidelis_identity_list` — list credentials with filtering
-  - `fidelis_identity_revoke` — revoke a credential with reason
+  - `atlas_identity_register` — issue a signed agent credential
+  - `atlas_identity_verify` — verify an agent's credential status
+  - `atlas_identity_list` — list credentials with filtering
+  - `atlas_identity_revoke` — revoke a credential with reason
 - **5 new identity fields** on AuditEntry (additive, no breaking changes):
   `agentId`, `identityVerified`, `credentialExpiry`, `agentRole`, `attestationDenyReason`
 - New source files: `agent-identity.ts`, `identity-registry.ts`, `attestation.ts`
@@ -146,7 +146,7 @@ All notable changes to Fidelis Channel are documented in this file.
 ### Changed
 - Version bumped to 0.5.0 (agent identity attestation release)
 - Permission request handler now runs attestation before policy evaluation
-- `fidelis_status` reports agent registry state and session agent ID
+- `atlas_status` reports agent registry state and session agent ID
 - Telegram denial messages include agent ID for traceability
 
 ### Security
@@ -161,7 +161,7 @@ All notable changes to Fidelis Channel are documented in this file.
 - **ML-DSA-65 post-quantum signatures** on every audit log entry (FIPS 204)
   - Keypair auto-generated on first run, stored in data directory (chmod 600)
   - Public key hash logged at session start for key pinning
-  - Signatures verified during `fidelis_audit_verify`
+  - Signatures verified during `atlas_audit_verify`
   - Designed for harvest-now-decrypt-later threat model (10-15+ year non-repudiation)
 - **SHA3-256 hash chaining** replaces SHA-256 for quantum-resistant tamper detection
   - Backwards-compatible verifier handles legacy SHA-256 entries
@@ -170,7 +170,7 @@ All notable changes to Fidelis Channel are documented in this file.
   - `rule_id` field captures the matched policy rule
   - `mitre` object includes technique ID, name, and tactic
   - Static lookup table covers all 65+ techniques in the default ruleset
-- **Structured verification stats** from `fidelis_audit_verify`:
+- **Structured verification stats** from `atlas_audit_verify`:
   total entries, PQ-signed count, HMAC-signed count, legacy entry count
 - New dependency: `@noble/post-quantum` (pure JS ML-DSA-65, no native bindings)
 - New source files: `quantum-signer.ts`, `mitre-attack.ts`
@@ -179,8 +179,8 @@ All notable changes to Fidelis Channel are documented in this file.
 ### Changed
 - Version bumped to 0.4.0 (quantum-hardened audit release)
 - Audit log entry schema extended with `hash_algorithm`, `rule_id`, `mitre`, `pq_signature` fields
-- `fidelis_audit_verify` now reports verification stats (PQ signatures, HMAC, legacy entries)
-- `fidelis_status` now includes quantum signing status and audit hash algorithm
+- `atlas_audit_verify` now reports verification stats (PQ signatures, HMAC, legacy entries)
+- `atlas_status` now includes quantum signing status and audit hash algorithm
 
 ### Security
 - ML-DSA-65 provides non-repudiation against quantum adversaries
@@ -292,4 +292,4 @@ All notable changes to Fidelis Channel are documented in this file.
 - Optional HMAC-SHA256 audit signing
 - Velocity limiting (requests per minute)
 - Anomaly detection (privilege escalation, sensitive access, data exfiltration, destructive git)
-- Three MCP tools: `fidelis_reply`, `fidelis_status`, `fidelis_audit_verify`
+- Three MCP tools: `atlas_reply`, `atlas_status`, `atlas_audit_verify`

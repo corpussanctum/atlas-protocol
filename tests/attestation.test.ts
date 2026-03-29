@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Attestation Layer (v0.5.0)
+ * Tests for Atlas Protocol — Attestation Layer (v0.5.0)
  *
  * Covers: attestAgent deny paths, capability checking, bootstrap guard,
  * enrichAuditEntry, and full flow integration.
@@ -22,7 +22,7 @@ import type { AuditEntry } from "../src/audit-log.js";
 let tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "fidelis-attest-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "atlas-attest-test-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -82,7 +82,7 @@ describe("Attestation — deny paths", () => {
     const registry = await createRegistry();
     registry.register({ name: "existing", role: "claude-code", capabilities: [] });
 
-    const result = attestAgent(registry, "did:fidelis:unknown-agent");
+    const result = attestAgent(registry, "did:atlas:unknown-agent");
     assert.equal(result.denyReason, "UNREGISTERED_AGENT");
   });
 
@@ -251,7 +251,7 @@ describe("Attestation — enrichAuditEntry", () => {
     const registry = await createRegistry();
     registry.register({ name: "blocker", role: "claude-code", capabilities: [] });
 
-    const attestation = attestAgent(registry, "did:fidelis:unknown");
+    const attestation = attestAgent(registry, "did:atlas:unknown");
     const entry = enrichAuditEntry(makeBaseEntry(), attestation);
 
     assert.equal(entry.attestationDenyReason, "UNREGISTERED_AGENT");

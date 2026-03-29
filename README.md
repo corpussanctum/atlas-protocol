@@ -1,14 +1,14 @@
-# Fidelis Channel
+# Atlas Protocol
 
 A Claude Code plugin that gates autonomous agent sessions with identity attestation, behavioral baselines, and a post-quantum audit trail — all relayed through Telegram for operator oversight.
 
-Fidelis is designed around a single assumption: **the agent might be compromised**. Every default is fail-closed. Agents must prove identity before acting. Behavioral drift is detected across sessions. And every decision is signed with ML-DSA-65 so the audit trail holds up 15 years from now.
+Atlas is designed around a single assumption: **the agent might be compromised**. Every default is fail-closed. Agents must prove identity before acting. Behavioral drift is detected across sessions. And every decision is signed with ML-DSA-65 so the audit trail holds up 15 years from now.
 
 ## How it works
 
 ```
               ┌─────────────────────────────────────────────────────────────┐
-              │                     Fidelis Gatekeeper                      │
+              │                     Atlas Gatekeeper                      │
               │                                                             │
   Agent ─────►│  Identity ──► Policy ──► Why Layer ──► Telegram ──► Verdict │
               │  Attestation   Engine     (CoE)         Relay       Allow/  │
@@ -48,7 +48,7 @@ When an agent requests permission to use a tool:
 ### From a marketplace
 
 ```bash
-claude plugin install fidelis-channel@<marketplace>
+claude plugin install atlas-protocol@<marketplace>
 ```
 
 Claude Code prompts for the Telegram bot token, allowed chat IDs, and optional HMAC secret through the `userConfig` mechanism.
@@ -56,35 +56,35 @@ Claude Code prompts for the Telegram bot token, allowed chat IDs, and optional H
 ### Local development
 
 ```bash
-git clone https://github.com/corpussanctum/fidelis-channel.git
-cd fidelis-channel
+git clone https://github.com/corpussanctum/atlas-protocol.git
+cd atlas-protocol
 npm install && npm run build
-claude --plugin-dir ./fidelis-channel
+claude --plugin-dir ./atlas-protocol
 ```
 
 ## Configuration
 
-Fidelis reads configuration from environment variables, a config file (`config.json` in the data directory), and built-in defaults — in that priority order.
+Atlas reads configuration from environment variables, a config file (`config.json` in the data directory), and built-in defaults — in that priority order.
 
 ### Required
 
 | Variable | Description |
 |---|---|
-| `FIDELIS_TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
-| `FIDELIS_TELEGRAM_CHAT_IDS` | Comma-separated authorized Telegram chat IDs |
+| `ATLAS_TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
+| `ATLAS_TELEGRAM_CHAT_IDS` | Comma-separated authorized Telegram chat IDs |
 
 ### Optional
 
 | Variable | Default | Description |
 |---|---|---|
-| `FIDELIS_PERMISSION_TIMEOUT` | `120` | Seconds before fail-closed denial |
-| `FIDELIS_HMAC_SECRET` | — | HMAC-SHA256 secret for audit log signing |
-| `FIDELIS_AUDIT_LOG_PATH` | `<data_dir>/audit.jsonl` | Audit log location |
-| `FIDELIS_DATA_DIR` | `${CLAUDE_PLUGIN_DATA}` or `~/.fidelis-channel` | Persistent state directory |
-| `FIDELIS_BRIEFCASE_PATH` | — | Path to a DIB Briefcase for consent-tier enforcement |
-| `FIDELIS_PRIVACY_MODE` | `false` | Force audit field redaction |
-| `FIDELIS_VELOCITY_LIMIT` | `30` | Requests per minute before anomaly flag |
-| `FIDELIS_POLL_INTERVAL_MS` | `1000` | Telegram polling interval |
+| `ATLAS_PERMISSION_TIMEOUT` | `120` | Seconds before fail-closed denial |
+| `ATLAS_HMAC_SECRET` | — | HMAC-SHA256 secret for audit log signing |
+| `ATLAS_AUDIT_LOG_PATH` | `<data_dir>/audit.jsonl` | Audit log location |
+| `ATLAS_DATA_DIR` | `${CLAUDE_PLUGIN_DATA}` or `~/.atlas-protocol` | Persistent state directory |
+| `ATLAS_BRIEFCASE_PATH` | — | Path to a DIB Briefcase for consent-tier enforcement |
+| `ATLAS_PRIVACY_MODE` | `false` | Force audit field redaction |
+| `ATLAS_VELOCITY_LIMIT` | `30` | Requests per minute before anomaly flag |
+| `ATLAS_POLL_INTERVAL_MS` | `1000` | Telegram polling interval |
 | `WHY_ENGINE_MODEL` | `qwen2.5:3b` | Ollama model for Why Layer experts |
 | `WHY_ENGINE_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `WHY_ENGINE_WINDOW_SIZE` | `50` | Max audit entries in assessment window |
@@ -92,7 +92,7 @@ Fidelis reads configuration from environment variables, a config file (`config.j
 
 ## Agent identity
 
-Every agent that passes through the gatekeeper must present a signed identity credential. Credentials use the DID format `did:fidelis:<uuid>` and are signed by the gatekeeper's ML-DSA-65 issuer key.
+Every agent that passes through the gatekeeper must present a signed identity credential. Credentials use the DID format `did:atlas:<uuid>` and are signed by the gatekeeper's ML-DSA-65 issuer key.
 
 ### Roles and capabilities
 
@@ -118,7 +118,7 @@ Orchestrator agents can issue scoped sub-credentials to child agents. Delegation
 
 ### Bootstrap guard
 
-On first run (empty registry), Fidelis allows requests through unverified so the system is not self-locking. Once the first credential is registered, identity enforcement activates.
+On first run (empty registry), Atlas allows requests through unverified so the system is not self-locking. Once the first credential is registered, identity enforcement activates.
 
 ## Policy engine
 
@@ -180,7 +180,7 @@ The Why Layer fires automatically on:
 | `IDENTITY_ANOMALY` | Unregistered agent or expired credential |
 | `CASCADE_REVOCATION` | Cascade revoke event |
 | `BASELINE_DRIFT` | Behavioral drift detected against longitudinal baseline |
-| `MANUAL` | Operator invokes `fidelis_why_assess` |
+| `MANUAL` | Operator invokes `atlas_why_assess` |
 
 A 30-second cooldown (configurable) prevents over-triggering. If Ollama is unavailable, the Why Layer returns a nominal stub — it never blocks the gatekeeper.
 
@@ -215,41 +215,41 @@ Drift signals are included in the Why Layer assessment, enriched into the audit 
 
 ## MCP tools
 
-Fidelis exposes 13 MCP tools to the Claude Code session:
+Atlas exposes 13 MCP tools to the Claude Code session:
 
 ### Core
 
 | Tool | Description |
 |---|---|
-| `fidelis_reply` | Send a message to the operator via Telegram |
-| `fidelis_audit_verify` | Verify audit log integrity (SHA3-256 chain + HMAC + ML-DSA-65) |
-| `fidelis_status` | Runtime status: Telegram, identity, policy, audit, baselines |
+| `atlas_reply` | Send a message to the operator via Telegram |
+| `atlas_audit_verify` | Verify audit log integrity (SHA3-256 chain + HMAC + ML-DSA-65) |
+| `atlas_status` | Runtime status: Telegram, identity, policy, audit, baselines |
 
 ### Identity management
 
 | Tool | Description |
 |---|---|
-| `fidelis_identity_register` | Issue a signed agent credential |
-| `fidelis_identity_verify` | Verify a credential by agentId |
-| `fidelis_identity_list` | List credentials (filter: active, revoked, expired, delegated, all) |
-| `fidelis_identity_revoke` | Revoke a credential |
+| `atlas_identity_register` | Issue a signed agent credential |
+| `atlas_identity_verify` | Verify a credential by agentId |
+| `atlas_identity_list` | List credentials (filter: active, revoked, expired, delegated, all) |
+| `atlas_identity_revoke` | Revoke a credential |
 
 ### Credential delegation
 
 | Tool | Description |
 |---|---|
-| `fidelis_identity_delegate` | Issue a scoped child credential from a parent |
-| `fidelis_identity_cascade_revoke` | Revoke a parent and all its descendants |
-| `fidelis_identity_tree` | View the credential delegation hierarchy |
+| `atlas_identity_delegate` | Issue a scoped child credential from a parent |
+| `atlas_identity_cascade_revoke` | Revoke a parent and all its descendants |
+| `atlas_identity_tree` | View the credential delegation hierarchy |
 
 ### Why Layer and baselines
 
 | Tool | Description |
 |---|---|
-| `fidelis_why_assess` | Manually trigger a Council of Experts assessment |
-| `fidelis_baseline_get` | Retrieve the full behavioral profile for an agent |
-| `fidelis_baseline_drift` | Run drift detection against the current audit window |
-| `fidelis_baseline_list` | List baseline profiles with maturity/role filters |
+| `atlas_why_assess` | Manually trigger a Council of Experts assessment |
+| `atlas_baseline_get` | Retrieve the full behavioral profile for an agent |
+| `atlas_baseline_drift` | Run drift detection against the current audit window |
+| `atlas_baseline_list` | List baseline profiles with maturity/role filters |
 
 ## Skills
 
@@ -257,9 +257,9 @@ Three slash commands are available inside a Claude Code session:
 
 | Skill | Description |
 |---|---|
-| `/fidelis:status` | Show configuration, policy rule counts, and audit log stats |
-| `/fidelis:audit` | Inspect the audit trail — verify, view recent entries, export |
-| `/fidelis:configure` | Set up or modify bot token, chat IDs, and HMAC secret |
+| `/atlas:status` | Show configuration, policy rule counts, and audit log stats |
+| `/atlas:audit` | Inspect the audit trail — verify, view recent entries, export |
+| `/atlas:configure` | Set up or modify bot token, chat IDs, and HMAC secret |
 
 ## Audit log
 
@@ -295,9 +295,9 @@ The ML-DSA-65 signing keypair is auto-generated on first run and stored at `<dat
 
 ## Identity and Briefcase integration
 
-If `FIDELIS_BRIEFCASE_PATH` points to a [DIB Briefcase](https://github.com/corpussanctum/dib) directory, Fidelis loads a 7-tier consent model (Public through Sealed / 42 CFR Part 2). The policy engine enforces consent boundaries and redacts sensitive fields in audit entries. A sample Briefcase is included in `sample-briefcase/`.
+If `ATLAS_BRIEFCASE_PATH` points to a [DIB Briefcase](https://github.com/corpussanctum/dib) directory, Atlas loads a 7-tier consent model (Public through Sealed / 42 CFR Part 2). The policy engine enforces consent boundaries and redacts sensitive fields in audit entries. A sample Briefcase is included in `sample-briefcase/`.
 
-This is an optional hardening layer. Fidelis works fully without it.
+This is an optional hardening layer. Atlas works fully without it.
 
 ## Architecture
 

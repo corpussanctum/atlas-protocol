@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Quantum Signer (ML-DSA-65)
+ * Tests for Atlas Protocol — Quantum Signer (ML-DSA-65)
  *
  * Covers: keypair generation/persistence, signing, verification,
  * tamper detection, and graceful degradation.
@@ -19,7 +19,7 @@ import { QuantumSigner } from "../src/quantum-signer.js";
 let tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "fidelis-quantum-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "atlas-quantum-test-"));
   tempDirs.push(dir);
   return dir;
 }

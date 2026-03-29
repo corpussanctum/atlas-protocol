@@ -1,6 +1,6 @@
 ---
 name: configure
-description: Set up Fidelis Channel — save Telegram bot token, set HMAC secret, review policy rules. Use when the user pastes a bot token, asks to configure Fidelis, or wants to check channel status.
+description: Set up Atlas Protocol — save Telegram bot token, set HMAC secret, review policy rules. Use when the user pastes a bot token, asks to configure Atlas, or wants to check channel status.
 user-invocable: true
 allowed-tools:
   - Read
@@ -10,9 +10,9 @@ allowed-tools:
   - Bash(chmod *)
 ---
 
-# /fidelis:configure — Fidelis Channel Setup
+# /atlas:configure — Atlas Protocol Setup
 
-Writes configuration to `~/.fidelis-channel/config.json` and orients the user
+Writes configuration to `~/.atlas-protocol/config.json` and orients the user
 on security policy. The MCP server reads config at boot.
 
 Arguments passed: `$ARGUMENTS`
@@ -25,7 +25,7 @@ Arguments passed: `$ARGUMENTS`
 
 Read both config files and give the user a complete picture:
 
-1. **Token** — check `~/.fidelis-channel/config.json` for `telegram_bot_token`.
+1. **Token** — check `~/.atlas-protocol/config.json` for `telegram_bot_token`.
    Show set/not-set; if set, show first 10 chars masked (`865872415:...`).
 
 2. **HMAC** — check for `audit_hmac_secret`. Show enabled/disabled.
@@ -38,19 +38,19 @@ Read both config files and give the user a complete picture:
 
 5. **Allowed chats** — list chat IDs. If empty, warn that no one can issue verdicts.
 
-6. **Audit log** — check if `~/.fidelis-channel/audit.jsonl` exists, show entry
+6. **Audit log** — check if `~/.atlas-protocol/audit.jsonl` exists, show entry
    count and file size.
 
 7. **What next** — end with a concrete next step:
-   - No token → *"Run `/fidelis:configure <token>` with the token from BotFather."*
-   - Token set, no chat IDs → *"Add your chat ID: `/fidelis:configure chat <id>`"*
-   - Everything configured → *"Ready. Launch with `claude --dangerously-load-development-channels server:fidelis-channel`"*
+   - No token → *"Run `/atlas:configure <token>` with the token from BotFather."*
+   - Token set, no chat IDs → *"Add your chat ID: `/atlas:configure chat <id>`"*
+   - Everything configured → *"Ready. Launch with `claude --dangerously-load-development-channels server:atlas-protocol`"*
 
 ### `<token>` — save bot token
 
 1. Treat `$ARGUMENTS` as the token (trim whitespace). BotFather tokens look
    like `123456789:AAH...` — numeric prefix, colon, long string.
-2. `mkdir -p ~/.fidelis-channel`
+2. `mkdir -p ~/.atlas-protocol`
 3. Read existing `config.json` if present; update `telegram_bot_token`, preserve
    other keys. Write back.
 4. Confirm, then show the no-args status.

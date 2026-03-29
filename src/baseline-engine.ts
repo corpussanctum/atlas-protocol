@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Baseline Engine (v0.7.0)
+ * Atlas Protocol — Baseline Engine (v0.7.0)
  *
  * Computation engine for per-agent behavioral baselines. Ingests audit
  * entries and Why assessments, computes derived statistics, and detects

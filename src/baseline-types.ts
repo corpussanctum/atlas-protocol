@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Baseline Types (v0.7.0)
+ * Atlas Protocol — Baseline Types (v0.7.0)
  *
  * Per-agent behavioral profiles that accumulate across sessions.
  * The Why Layer compares current behavior against these baselines

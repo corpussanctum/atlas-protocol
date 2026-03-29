@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Agent Identity (v0.5.0)
+ * Tests for Atlas Protocol — Agent Identity (v0.5.0)
  *
  * Covers: keypair generation, credential issuance, canonical payload,
  * signature verification, expiry, revocation, tamper detection.
@@ -66,12 +66,12 @@ describe("Agent Identity — keypair generation", () => {
 // ---------------------------------------------------------------------------
 
 describe("Agent Identity — credential issuance", () => {
-  it("issueCredential returns credential with did:fidelis: prefix", () => {
+  it("issueCredential returns credential with did:atlas: prefix", () => {
     const cred = issueCredential(
       { name: "test-agent", role: "claude-code", capabilities: ["file:read"] },
       issuerSecretKey
     );
-    assert.ok(cred.agentId.startsWith("did:fidelis:"), `agentId should start with did:fidelis:, got ${cred.agentId}`);
+    assert.ok(cred.agentId.startsWith("did:atlas:"), `agentId should start with did:atlas:, got ${cred.agentId}`);
     assert.equal(cred.name, "test-agent");
     assert.equal(cred.role, "claude-code");
     assert.equal(cred.version, "0.5.0");
@@ -240,7 +240,7 @@ describe("Agent Identity — revocation", () => {
 describe("Agent Identity — canonical payload", () => {
   it("buildCanonicalPayload is deterministic (same input → same output)", () => {
     const partial = {
-      agentId: "did:fidelis:test-123",
+      agentId: "did:atlas:test-123",
       name: "determinism",
       role: "claude-code" as const,
       issuedAt: "2026-03-28T00:00:00.000Z",
@@ -258,7 +258,7 @@ describe("Agent Identity — canonical payload", () => {
 
   it("buildCanonicalPayload excludes issuerSignature and credentialHash", () => {
     const partial = {
-      agentId: "did:fidelis:test-456",
+      agentId: "did:atlas:test-456",
       name: "exclusion",
       role: "observer" as const,
       issuedAt: "2026-03-28T00:00:00.000Z",
@@ -276,7 +276,7 @@ describe("Agent Identity — canonical payload", () => {
 
   it("buildCanonicalPayload sorts capabilities for determinism", () => {
     const partial1 = {
-      agentId: "did:fidelis:sort-test",
+      agentId: "did:atlas:sort-test",
       name: "sort",
       role: "claude-code" as const,
       issuedAt: "2026-03-28T00:00:00.000Z",

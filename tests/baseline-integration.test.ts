@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Baseline Integration (v0.7.0)
+ * Tests for Atlas Protocol — Baseline Integration (v0.7.0)
  *
  * Full-flow integration tests: ingest entries, build baselines,
  * drift detection, synthesize with drift, formatTelegramAlert.
@@ -29,7 +29,7 @@ import type { BaselineProfile, DriftAssessment } from "../src/baseline-types.js"
 // ---------------------------------------------------------------------------
 
 function createTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "fidelis-integration-test-"));
+  return mkdtempSync(join(tmpdir(), "atlas-integration-test-"));
 }
 
 let seq = 0;
@@ -60,7 +60,7 @@ function makeExpert(
 
 function makeDriftAssessment(overrides: Partial<DriftAssessment> = {}): DriftAssessment {
   return {
-    agentId: overrides.agentId ?? "did:fidelis:test-agent",
+    agentId: overrides.agentId ?? "did:atlas:test-agent",
     assessedAt: overrides.assessedAt ?? new Date().toISOString(),
     baselineMaturity: overrides.baselineMaturity ?? "established",
     driftDetected: overrides.driftDetected ?? false,
@@ -78,7 +78,7 @@ function makeDriftAssessment(overrides: Partial<DriftAssessment> = {}): DriftAss
 function makeBaseline(overrides: Partial<BaselineProfile> = {}): BaselineProfile {
   const now = new Date().toISOString();
   return {
-    agentId: overrides.agentId ?? "did:fidelis:test-agent",
+    agentId: overrides.agentId ?? "did:atlas:test-agent",
     agentName: overrides.agentName ?? "Test Agent",
     agentRole: overrides.agentRole ?? "assistant",
     createdAt: overrides.createdAt ?? now,
@@ -150,12 +150,12 @@ describe("Baseline Integration", () => {
     // To get "developing" maturity, we need totalSessions >= 10.
     // We manually create a profile with totalSessions=9 then ingest one more
     // and manually set totalSessions.
-    const profile = createEmptyProfile("did:fidelis:flow-test", "Flow Agent", "assistant");
+    const profile = createEmptyProfile("did:atlas:flow-test", "Flow Agent", "assistant");
     profile.totalSessions = 9;
     await store.save(profile);
 
     // Ingest an entry — this triggers recalculation
-    const entry = mockAuditEntry({ agentId: "did:fidelis:flow-test", verdict: "allow" });
+    const entry = mockAuditEntry({ agentId: "did:atlas:flow-test", verdict: "allow" });
     const result = await ingestEntry(entry, store);
 
     // Still insufficient because totalSessions is 9 (ingestEntry does not increment sessions)
@@ -166,7 +166,7 @@ describe("Baseline Integration", () => {
     await store.save(result);
 
     // Ingest another to trigger recalculation
-    const entry2 = mockAuditEntry({ agentId: "did:fidelis:flow-test", verdict: "allow" });
+    const entry2 = mockAuditEntry({ agentId: "did:atlas:flow-test", verdict: "allow" });
     const result2 = await ingestEntry(entry2, store);
     assert.equal(result2.maturityLevel, "developing");
   });
@@ -277,7 +277,7 @@ describe("Baseline Integration", () => {
       modelUsed: "test",
       researchArtifact: {
         eventCount: 5,
-        uniqueAgents: ["did:fidelis:test"],
+        uniqueAgents: ["did:atlas:test"],
         uniqueTechniques: ["T1083"],
         tacticsObserved: ["Discovery"],
         riskProgression: [10, 20, 30, 40, 50],
@@ -311,7 +311,7 @@ describe("Baseline Integration", () => {
     const store = new BaselineStore(dir);
 
     // Create a profile with 99 whyHistory entries
-    const profile = createEmptyProfile("did:fidelis:cap-test", "Cap Agent", "assistant");
+    const profile = createEmptyProfile("did:atlas:cap-test", "Cap Agent", "assistant");
     profile.totalSessions = 50;
     for (let i = 0; i < 99; i++) {
       profile.whyHistory.push({
@@ -349,10 +349,10 @@ describe("Baseline Integration", () => {
           temporalPattern: "steady",
         },
       };
-      await ingestAssessment("did:fidelis:cap-test", assessment, "CAP_TEST", store);
+      await ingestAssessment("did:atlas:cap-test", assessment, "CAP_TEST", store);
     }
 
-    const result = await store.get("did:fidelis:cap-test");
+    const result = await store.get("did:atlas:cap-test");
     assert.ok(result);
     assert.ok(result.whyHistory.length <= 100);
   });

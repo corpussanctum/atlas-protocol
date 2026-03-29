@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Policy Engine (v0.2.1)
+ * Tests for Atlas Protocol — Policy Engine (v0.2.1)
  *
  * Covers: rule matching, glob matching, anomaly detection,
  * smuggling/obfuscation, PII heuristics, and identity-aware consent checks.
@@ -9,7 +9,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { PolicyEngine } from "../src/policy-engine.js";
 import type { PermissionRequest } from "../src/policy-engine.js";
-import type { FidelisConfig, PolicyRule } from "../src/config.js";
+import type { AtlasConfig, PolicyRule } from "../src/config.js";
 import type { IdentityContext } from "../src/identity-provider.js";
 import { ConsentTier, emptyIdentityContext } from "../src/identity-provider.js";
 
@@ -17,10 +17,10 @@ import { ConsentTier, emptyIdentityContext } from "../src/identity-provider.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeConfig(rules: PolicyRule[], velocityLimit = 30): FidelisConfig {
+function makeConfig(rules: PolicyRule[], velocityLimit = 30): AtlasConfig {
   return {
-    data_dir: "/tmp/fidelis-policy-test",
-    config_path: "/tmp/fidelis-policy-test/config.json",
+    data_dir: "/tmp/atlas-policy-test",
+    config_path: "/tmp/atlas-policy-test/config.json",
     telegram_bot_token: "",
     telegram_allowed_chat_ids: [],
     telegram_poll_interval_ms: 1000,

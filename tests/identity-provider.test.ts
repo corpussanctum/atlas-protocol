@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Identity Provider
+ * Tests for Atlas Protocol — Identity Provider
  */
 
 import { describe, it, afterEach } from "node:test";
@@ -22,7 +22,7 @@ import {
 let tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "fidelis-identity-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "atlas-identity-test-"));
   tempDirs.push(dir);
   return dir;
 }

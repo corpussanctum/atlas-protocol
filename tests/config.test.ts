@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Config Loader
+ * Tests for Atlas Protocol — Config Loader
  */
 
 import { describe, it, afterEach } from "node:test";
@@ -41,22 +41,22 @@ function restoreEnv() {
 }
 
 function makeTempDataDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "fidelis-config-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "atlas-config-test-"));
   tempDirs.push(dir);
   return dir;
 }
 
-function clearAllFidelisEnv() {
-  clearEnv("FIDELIS_DATA_DIR");
-  clearEnv("FIDELIS_CONFIG_PATH");
-  clearEnv("FIDELIS_TELEGRAM_BOT_TOKEN");
-  clearEnv("FIDELIS_TELEGRAM_CHAT_IDS");
-  clearEnv("FIDELIS_PERMISSION_TIMEOUT");
-  clearEnv("FIDELIS_AUDIT_LOG_PATH");
-  clearEnv("FIDELIS_HMAC_SECRET");
-  clearEnv("FIDELIS_VELOCITY_LIMIT");
-  clearEnv("FIDELIS_POLL_INTERVAL_MS");
-  clearEnv("FIDELIS_BRIEFCASE_PATH");
+function clearAllAtlasEnv() {
+  clearEnv("ATLAS_DATA_DIR");
+  clearEnv("ATLAS_CONFIG_PATH");
+  clearEnv("ATLAS_TELEGRAM_BOT_TOKEN");
+  clearEnv("ATLAS_TELEGRAM_CHAT_IDS");
+  clearEnv("ATLAS_PERMISSION_TIMEOUT");
+  clearEnv("ATLAS_AUDIT_LOG_PATH");
+  clearEnv("ATLAS_HMAC_SECRET");
+  clearEnv("ATLAS_VELOCITY_LIMIT");
+  clearEnv("ATLAS_POLL_INTERVAL_MS");
+  clearEnv("ATLAS_BRIEFCASE_PATH");
   clearEnv("CLAUDE_PLUGIN_DATA");
 }
 
@@ -70,8 +70,8 @@ afterEach(() => {
 describe("loadConfig — defaults", () => {
   it("returns a complete config object", () => {
     const dataDir = makeTempDataDir();
-    clearAllFidelisEnv();
-    setEnv("FIDELIS_DATA_DIR", dataDir);
+    clearAllAtlasEnv();
+    setEnv("ATLAS_DATA_DIR", dataDir);
 
     const config = loadConfig();
     assert.ok(config);
@@ -83,65 +83,65 @@ describe("loadConfig — defaults", () => {
   });
 
   it("fail-closed timeout defaults to 120 seconds", () => {
-    setEnv("FIDELIS_DATA_DIR", makeTempDataDir());
+    setEnv("ATLAS_DATA_DIR", makeTempDataDir());
     const config = loadConfig();
     assert.equal(config.permission_timeout_seconds, 120);
   });
 
   it("default audit log path is under the resolved data dir", () => {
     const dataDir = makeTempDataDir();
-    setEnv("FIDELIS_DATA_DIR", dataDir);
+    setEnv("ATLAS_DATA_DIR", dataDir);
     const config = loadConfig();
     assert.equal(config.audit_log_path, join(dataDir, "audit.jsonl"));
   });
 
   it("defaults to no token and no authorized chats", () => {
-    setEnv("FIDELIS_DATA_DIR", makeTempDataDir());
+    setEnv("ATLAS_DATA_DIR", makeTempDataDir());
     const config = loadConfig();
     assert.equal(config.telegram_bot_token, "");
     assert.deepEqual(config.telegram_allowed_chat_ids, []);
   });
 
   it("defaults to empty briefcase_path", () => {
-    setEnv("FIDELIS_DATA_DIR", makeTempDataDir());
+    setEnv("ATLAS_DATA_DIR", makeTempDataDir());
     const config = loadConfig();
     assert.equal(config.briefcase_path, "");
   });
 });
 
 describe("loadConfig — environment variable overrides", () => {
-  it("FIDELIS_TELEGRAM_BOT_TOKEN overrides default", () => {
-    setEnv("FIDELIS_DATA_DIR", makeTempDataDir());
-    setEnv("FIDELIS_TELEGRAM_BOT_TOKEN", "123456:ABC-DEF");
+  it("ATLAS_TELEGRAM_BOT_TOKEN overrides default", () => {
+    setEnv("ATLAS_DATA_DIR", makeTempDataDir());
+    setEnv("ATLAS_TELEGRAM_BOT_TOKEN", "123456:ABC-DEF");
     const config = loadConfig();
     assert.equal(config.telegram_bot_token, "123456:ABC-DEF");
   });
 
-  it("FIDELIS_TELEGRAM_CHAT_IDS parses comma-separated numbers", () => {
-    setEnv("FIDELIS_DATA_DIR", makeTempDataDir());
-    setEnv("FIDELIS_TELEGRAM_CHAT_IDS", "111, 222, 333");
+  it("ATLAS_TELEGRAM_CHAT_IDS parses comma-separated numbers", () => {
+    setEnv("ATLAS_DATA_DIR", makeTempDataDir());
+    setEnv("ATLAS_TELEGRAM_CHAT_IDS", "111, 222, 333");
     const config = loadConfig();
     assert.deepEqual(config.telegram_allowed_chat_ids, [111, 222, 333]);
   });
 
-  it("FIDELIS_AUDIT_LOG_PATH overrides default", () => {
-    setEnv("FIDELIS_DATA_DIR", makeTempDataDir());
-    setEnv("FIDELIS_AUDIT_LOG_PATH", "/tmp/custom-audit.jsonl");
+  it("ATLAS_AUDIT_LOG_PATH overrides default", () => {
+    setEnv("ATLAS_DATA_DIR", makeTempDataDir());
+    setEnv("ATLAS_AUDIT_LOG_PATH", "/tmp/custom-audit.jsonl");
     const config = loadConfig();
     assert.equal(config.audit_log_path, "/tmp/custom-audit.jsonl");
   });
 
-  it("FIDELIS_DATA_DIR takes precedence for default paths", () => {
+  it("ATLAS_DATA_DIR takes precedence for default paths", () => {
     const dataDir = makeTempDataDir();
-    setEnv("FIDELIS_DATA_DIR", dataDir);
+    setEnv("ATLAS_DATA_DIR", dataDir);
     const config = loadConfig();
     assert.equal(config.config_path, join(dataDir, "config.json"));
     assert.equal(config.audit_log_path, join(dataDir, "audit.jsonl"));
   });
 
-  it("FIDELIS_BRIEFCASE_PATH sets briefcase path", () => {
-    setEnv("FIDELIS_DATA_DIR", makeTempDataDir());
-    setEnv("FIDELIS_BRIEFCASE_PATH", "/home/user/my-briefcase");
+  it("ATLAS_BRIEFCASE_PATH sets briefcase path", () => {
+    setEnv("ATLAS_DATA_DIR", makeTempDataDir());
+    setEnv("ATLAS_BRIEFCASE_PATH", "/home/user/my-briefcase");
     const config = loadConfig();
     assert.equal(config.briefcase_path, "/home/user/my-briefcase");
   });
@@ -150,7 +150,7 @@ describe("loadConfig — environment variable overrides", () => {
 describe("loadConfig — JSON config file", () => {
   it("loads settings from the resolved config path", () => {
     const dataDir = makeTempDataDir();
-    setEnv("FIDELIS_DATA_DIR", dataDir);
+    setEnv("ATLAS_DATA_DIR", dataDir);
 
     mkdirSync(dataDir, { recursive: true });
     writeFileSync(
@@ -169,7 +169,7 @@ describe("loadConfig — JSON config file", () => {
 
   it("environment variables take priority over JSON config", () => {
     const dataDir = makeTempDataDir();
-    setEnv("FIDELIS_DATA_DIR", dataDir);
+    setEnv("ATLAS_DATA_DIR", dataDir);
 
     mkdirSync(dataDir, { recursive: true });
     writeFileSync(
@@ -177,7 +177,7 @@ describe("loadConfig — JSON config file", () => {
       JSON.stringify({ permission_timeout_seconds: 300 }),
       "utf-8"
     );
-    setEnv("FIDELIS_PERMISSION_TIMEOUT", "60");
+    setEnv("ATLAS_PERMISSION_TIMEOUT", "60");
 
     const config = loadConfig();
     assert.equal(config.permission_timeout_seconds, 60);

@@ -1,5 +1,5 @@
 {
-  "name": "fidelis-channel",
+  "name": "atlas-protocol",
   "version": "0.7.0",
   "description": "Telegram approval channel for Claude Code with fail-closed permission relay, policy rules, and tamper-evident audit logging.",
   "author": {
@@ -18,7 +18,7 @@
   "mcpServers": "./.mcp.marketplace.json",
   "channels": [
     {
-      "server": "fidelis-channel",
+      "server": "atlas-protocol",
       "userConfig": {
         "bot_token": {
           "title": "Telegram Bot Token",

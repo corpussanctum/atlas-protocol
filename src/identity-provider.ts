@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Identity Provider
+ * Atlas Protocol — Identity Provider
  *
  * Abstraction layer between the policy engine and the principal's identity context.
  *
@@ -189,7 +189,7 @@ export class BriefcaseIdentityProvider implements IdentityProvider {
   load(): IdentityContext {
     if (!existsSync(this.briefcasePath)) {
       console.error(
-        `[fidelis-identity] Briefcase path not found: ${this.briefcasePath}. Falling back to standalone mode.`
+        `[atlas-identity] Briefcase path not found: ${this.briefcasePath}. Falling back to standalone mode.`
       );
       return this.context;
     }

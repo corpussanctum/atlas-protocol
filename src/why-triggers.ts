@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Why Triggers (v0.6.0)
+ * Atlas Protocol — Why Triggers (v0.6.0)
  *
  * Determines when the Why Engine should be invoked based on audit event
  * patterns. Includes cooldown logic to prevent over-triggering and a

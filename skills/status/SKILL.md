@@ -1,6 +1,6 @@
 ---
 name: status
-description: Show Fidelis Channel status — connection state, policy summary, audit stats, recent decisions. Use when the user asks "is fidelis running", "what's the gatekeeper status", or wants a security overview.
+description: Show Atlas Protocol status — connection state, policy summary, audit stats, recent decisions. Use when the user asks "is atlas running", "what's the gatekeeper status", or wants a security overview.
 user-invocable: true
 allowed-tools:
   - Read
@@ -9,9 +9,9 @@ allowed-tools:
   - Bash(ls *)
 ---
 
-# /fidelis:status — Fidelis Channel Status
+# /atlas:status — Atlas Protocol Status
 
-Shows the current state of the Fidelis Channel security layer.
+Shows the current state of the Atlas Protocol security layer.
 
 Arguments passed: `$ARGUMENTS`
 
@@ -21,7 +21,7 @@ Arguments passed: `$ARGUMENTS`
 
 ### 1. Configuration
 
-Read `~/.fidelis-channel/config.json`:
+Read `~/.atlas-protocol/config.json`:
 - Telegram bot: configured/not configured
 - Allowed chat IDs: list them
 - HMAC signing: enabled/disabled
@@ -38,16 +38,16 @@ Count by action type:
 
 ### 3. Audit log
 
-Read `~/.fidelis-channel/audit.jsonl`:
+Read `~/.atlas-protocol/audit.jsonl`:
 - File exists: yes/no
 - Entry count: `wc -l`
 - File size
 - Last 5 entries: show timestamp, event type, and verdict (if applicable)
-- Chain integrity: note that user can verify with `fidelis_audit_verify` tool
+- Chain integrity: note that user can verify with `atlas_audit_verify` tool
 
 ### 4. Active session
 
-If the user has the `fidelis_status` MCP tool available, suggest using it for
+If the user has the `atlas_status` MCP tool available, suggest using it for
 live runtime info (pending verdicts, velocity count).
 
 ---
@@ -57,7 +57,7 @@ live runtime info (pending verdicts, velocity count).
 Use a clean summary format:
 
 ```
-Fidelis Channel Status
+Atlas Protocol Status
 ━━━━━━━━━━━━━━━━━━━━━━
 Telegram:    configured (bot ID: 865872415...)
 Allowed:     1 chat (123456789)

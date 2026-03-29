@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Identity Registry (v0.5.0)
+ * Tests for Atlas Protocol — Identity Registry (v0.5.0)
  *
  * Covers: registration, lookup, verification, revocation, filtering,
  * file persistence, and bootstrap detection.
@@ -20,7 +20,7 @@ import { IdentityRegistry } from "../src/identity-registry.js";
 let tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "fidelis-registry-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "atlas-registry-test-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -56,7 +56,7 @@ describe("IdentityRegistry — registration", () => {
       capabilities: ["file:read", "shell:exec"],
     });
 
-    assert.ok(cred.agentId.startsWith("did:fidelis:"));
+    assert.ok(cred.agentId.startsWith("did:atlas:"));
     assert.equal(cred.name, "test-agent");
     assert.equal(cred.role, "claude-code");
     assert.equal(cred.revoked, false);
@@ -102,7 +102,7 @@ describe("IdentityRegistry — lookup", () => {
 
   it("get returns undefined for unknown agentId", async () => {
     const { registry } = await createRegistry();
-    const found = registry.get("did:fidelis:nonexistent");
+    const found = registry.get("did:atlas:nonexistent");
     assert.equal(found, undefined);
   });
 });
@@ -127,7 +127,7 @@ describe("IdentityRegistry — verification", () => {
 
   it("verify returns valid: false for unknown agent", async () => {
     const { registry } = await createRegistry();
-    const result = registry.verify("did:fidelis:unknown");
+    const result = registry.verify("did:atlas:unknown");
     assert.equal(result.valid, false);
     assert.ok(result.reason?.includes("not found"));
   });
@@ -156,7 +156,7 @@ describe("IdentityRegistry — revocation", () => {
 
   it("revoke returns false for unknown agent", async () => {
     const { registry } = await createRegistry();
-    const success = registry.revoke("did:fidelis:unknown", "test");
+    const success = registry.revoke("did:atlas:unknown", "test");
     assert.equal(success, false);
   });
 

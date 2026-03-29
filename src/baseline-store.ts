@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Baseline Store (v0.7.0)
+ * Atlas Protocol — Baseline Store (v0.7.0)
  *
  * JSON-file persistence for per-agent behavioral baselines.
  * Storage: <dataDir>/baselines/<agentId-safe>.json (chmod 600)
@@ -25,7 +25,7 @@ export class BaselineStore {
   }
 
   private safePath(agentId: string): string {
-    // did:fidelis:uuid → did-fidelis-uuid.json
+    // did:atlas:uuid → did-atlas-uuid.json
     const safe = agentId.replace(/[^a-zA-Z0-9-]/g, "-");
     return join(this.baseDir, `${safe}.json`);
   }
@@ -36,7 +36,7 @@ export class BaselineStore {
     try {
       return JSON.parse(readFileSync(path, "utf-8")) as BaselineProfile;
     } catch {
-      console.error(`[fidelis] WARNING: corrupt baseline file for ${agentId}, ignoring`);
+      console.error(`[atlas] WARNING: corrupt baseline file for ${agentId}, ignoring`);
       return undefined;
     }
   }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Fidelis Channel — Claude Code Channels Plugin (v0.5.0)
+ * Atlas Protocol — Claude Code Channels Plugin (v0.5.0)
  *
  * Telegram approval channel for Claude Code with:
  *   - agent identity attestation (ML-DSA-65 signed credentials)
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   // Initialize identity registry
   const registry = await IdentityRegistry.create(config.data_dir, signer);
 
-  // Session-level active agent ID (set by fidelis_identity_register)
+  // Session-level active agent ID (set by atlas_identity_register)
   let sessionAgentId: string | undefined;
 
   // Baseline store
@@ -91,10 +91,10 @@ async function main(): Promise<void> {
     {
       redact_fields: identityContext.loaded
         ? identityContext.audit_redact_fields
-        : process.env.FIDELIS_PRIVACY_MODE === "true"
+        : process.env.ATLAS_PRIVACY_MODE === "true"
           ? ["input_preview"]
           : [],
-      force_privacy: process.env.FIDELIS_PRIVACY_MODE === "true",
+      force_privacy: process.env.ATLAS_PRIVACY_MODE === "true",
     },
     signer,
   );
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
 
   const mcp = new Server(
     {
-      name: "fidelis-channel",
+      name: "atlas-protocol",
       version: VERSION,
     },
     {
@@ -154,12 +154,12 @@ async function main(): Promise<void> {
         },
       },
       instructions: [
-        "Fidelis Channel forwards authorized Telegram messages into this Claude Code session.",
-        "Use fidelis_reply to reply to the operator. By default replies go to the most recent authorized chat.",
+        "Atlas Protocol forwards authorized Telegram messages into this Claude Code session.",
+        "Use atlas_reply to reply to the operator. By default replies go to the most recent authorized chat.",
         "Permission requests are evaluated by a local policy engine before being relayed to Telegram.",
-        "When no verdict arrives before the timeout, Fidelis denies the request by design.",
-        "Use fidelis_audit_verify to verify the audit log and fidelis_status to inspect runtime status.",
-        "Use fidelis_identity_register to register this agent session with the gatekeeper.",
+        "When no verdict arrives before the timeout, Atlas denies the request by design.",
+        "Use atlas_audit_verify to verify the audit log and atlas_status to inspect runtime status.",
+        "Use atlas_identity_register to register this agent session with the gatekeeper.",
       ].join("\n"),
     }
   );
@@ -171,7 +171,7 @@ async function main(): Promise<void> {
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: "fidelis_reply",
+        name: "atlas_reply",
         description:
           "Send a reply message to the Telegram operator. Defaults to the most recent authorized chat unless chat_id or broadcast is provided.",
         inputSchema: {
@@ -186,18 +186,18 @@ async function main(): Promise<void> {
         },
       },
       {
-        name: "fidelis_audit_verify",
+        name: "atlas_audit_verify",
         description: "Verify audit log integrity: SHA3-256 chain, HMAC, and ML-DSA-65 signatures.",
         inputSchema: { type: "object" as const, properties: {} },
       },
       {
-        name: "fidelis_status",
-        description: "Get Fidelis runtime status including identity registry, quantum signing, and Telegram state.",
+        name: "atlas_status",
+        description: "Get Atlas runtime status including identity registry, quantum signing, and Telegram state.",
         inputSchema: { type: "object" as const, properties: {} },
       },
       // -- Identity management tools (v0.5.0) --------------------------------
       {
-        name: "fidelis_identity_register",
+        name: "atlas_identity_register",
         description:
           "Register a new agent identity with the gatekeeper. Returns a signed credential. " +
           "First registration (bootstrap) is unrestricted. Subsequent registrations require identity:register capability.",
@@ -217,18 +217,18 @@ async function main(): Promise<void> {
         },
       },
       {
-        name: "fidelis_identity_verify",
+        name: "atlas_identity_verify",
         description: "Verify an agent credential by agentId.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            agent_id: { type: "string", description: "The did:fidelis:<uuid> to verify" },
+            agent_id: { type: "string", description: "The did:atlas:<uuid> to verify" },
           },
           required: ["agent_id"],
         },
       },
       {
-        name: "fidelis_identity_list",
+        name: "atlas_identity_list",
         description: "List agent credentials. Filter: active, revoked, expired, or all.",
         inputSchema: {
           type: "object" as const,
@@ -238,12 +238,12 @@ async function main(): Promise<void> {
         },
       },
       {
-        name: "fidelis_identity_revoke",
+        name: "atlas_identity_revoke",
         description: "Revoke an agent credential by agentId.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            agent_id: { type: "string", description: "The did:fidelis:<uuid> to revoke" },
+            agent_id: { type: "string", description: "The did:atlas:<uuid> to revoke" },
             reason: { type: "string", description: "Reason for revocation" },
           },
           required: ["agent_id", "reason"],
@@ -251,13 +251,13 @@ async function main(): Promise<void> {
       },
       // -- Delegation tools (v0.6.0) ------------------------------------------
       {
-        name: "fidelis_identity_delegate",
+        name: "atlas_identity_delegate",
         description:
           "Delegate a scoped sub-credential from a parent agent. Child capabilities must be a subset of parent's. Max depth: 3.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            parent_agent_id: { type: "string", description: "Parent did:fidelis:<uuid>" },
+            parent_agent_id: { type: "string", description: "Parent did:atlas:<uuid>" },
             child_name: { type: "string", description: "Child agent display name" },
             child_role: { type: "string", enum: VALID_ROLES, description: "Child agent role" },
             capabilities: {
@@ -271,54 +271,54 @@ async function main(): Promise<void> {
         },
       },
       {
-        name: "fidelis_identity_cascade_revoke",
+        name: "atlas_identity_cascade_revoke",
         description: "Revoke a parent credential and all descendants recursively.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            parent_agent_id: { type: "string", description: "Parent did:fidelis:<uuid> to revoke" },
+            parent_agent_id: { type: "string", description: "Parent did:atlas:<uuid> to revoke" },
             reason: { type: "string", description: "Reason for revocation" },
           },
           required: ["parent_agent_id", "reason"],
         },
       },
       {
-        name: "fidelis_identity_tree",
+        name: "atlas_identity_tree",
         description: "Get the full credential tree rooted at an agentId.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            agent_id: { type: "string", description: "Root did:fidelis:<uuid>" },
+            agent_id: { type: "string", description: "Root did:atlas:<uuid>" },
           },
           required: ["agent_id"],
         },
       },
       // -- Baseline tools (v0.7.0) ---------------------------------------------
       {
-        name: "fidelis_baseline_get",
+        name: "atlas_baseline_get",
         description: "Get the behavioral baseline profile for an agent.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            agent_id: { type: "string", description: "The did:fidelis:<uuid>" },
+            agent_id: { type: "string", description: "The did:atlas:<uuid>" },
           },
           required: ["agent_id"],
         },
       },
       {
-        name: "fidelis_baseline_drift",
+        name: "atlas_baseline_drift",
         description: "Run drift detection against an agent's baseline using the current audit window.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            agent_id: { type: "string", description: "The did:fidelis:<uuid>" },
+            agent_id: { type: "string", description: "The did:atlas:<uuid>" },
             window_minutes: { type: "number", description: "Time window in minutes (default: 60)" },
           },
           required: ["agent_id"],
         },
       },
       {
-        name: "fidelis_baseline_list",
+        name: "atlas_baseline_list",
         description: "List all behavioral baseline profiles, optionally filtered.",
         inputSchema: {
           type: "object" as const,
@@ -330,7 +330,7 @@ async function main(): Promise<void> {
       },
       // -- Why Layer tool (v0.6.0) --------------------------------------------
       {
-        name: "fidelis_why_assess",
+        name: "atlas_why_assess",
         description:
           "Manually trigger a Why Layer assessment on the current audit event window. Returns a CoE analysis with anomaly detection, intent inference, and threat narrative.",
         inputSchema: {
@@ -355,7 +355,7 @@ async function main(): Promise<void> {
     switch (name) {
       // -- Existing tools ---------------------------------------------------
 
-      case "fidelis_reply": {
+      case "atlas_reply": {
         const message = (args?.message as string) || "";
         const chatId = typeof args?.chat_id === "number" ? args.chat_id : undefined;
         const broadcast = Boolean(args?.broadcast);
@@ -374,7 +374,7 @@ async function main(): Promise<void> {
         }
       }
 
-      case "fidelis_audit_verify": {
+      case "atlas_audit_verify": {
         const result = audit.verify();
         const lines = [
           result.valid ? "✅ Audit log integrity verified." : "❌ Audit log integrity FAILED:",
@@ -387,7 +387,7 @@ async function main(): Promise<void> {
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       }
 
-      case "fidelis_status": {
+      case "atlas_status": {
         const telegramStatus = telegram.getStatus();
         const signerStatus = signer.getStatus();
         const status = {
@@ -411,6 +411,9 @@ async function main(): Promise<void> {
             registry_size: registry.size,
             active_credentials: registry.list("active").length,
             bootstrap_mode: registry.isEmpty(),
+            ...(sessionAgentId && registry.get(sessionAgentId)
+              ? credentialTimeRemaining(registry.get(sessionAgentId)!.expiresAt)
+              : {}),
           },
           data_dir: config.data_dir,
           identity: {
@@ -428,7 +431,7 @@ async function main(): Promise<void> {
 
       // -- Identity management tools (v0.5.0) --------------------------------
 
-      case "fidelis_identity_register": {
+      case "atlas_identity_register": {
         const regName = args?.name as string;
         const role = args?.role as AgentRole;
         const capabilities = args?.capabilities as AgentCapability[];
@@ -479,7 +482,7 @@ async function main(): Promise<void> {
         }
       }
 
-      case "fidelis_identity_verify": {
+      case "atlas_identity_verify": {
         const verifyId = args?.agent_id as string;
         if (!verifyId) {
           return { content: [{ type: "text" as const, text: "Error: agent_id is required" }], isError: true };
@@ -488,13 +491,16 @@ async function main(): Promise<void> {
         return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
       }
 
-      case "fidelis_identity_list": {
+      case "atlas_identity_list": {
         const filter = (args?.filter as "active" | "revoked" | "expired" | "all") || "active";
-        const credentials = registry.list(filter).map(sanitizeCredential);
+        const credentials = registry.list(filter).map((c) => ({
+          ...sanitizeCredential(c),
+          ...credentialTimeRemaining(c.expiresAt),
+        }));
         return { content: [{ type: "text" as const, text: JSON.stringify(credentials, null, 2) }] };
       }
 
-      case "fidelis_identity_revoke": {
+      case "atlas_identity_revoke": {
         const revokeId = args?.agent_id as string;
         const reason = args?.reason as string;
         if (!revokeId || !reason) {
@@ -524,7 +530,7 @@ async function main(): Promise<void> {
 
       // -- Delegation tools (v0.6.0) ------------------------------------------
 
-      case "fidelis_identity_delegate": {
+      case "atlas_identity_delegate": {
         const parentId = args?.parent_agent_id as string;
         const childName = args?.child_name as string;
         const childRole = args?.child_role as AgentRole;
@@ -565,7 +571,7 @@ async function main(): Promise<void> {
         }
       }
 
-      case "fidelis_identity_cascade_revoke": {
+      case "atlas_identity_cascade_revoke": {
         const cascadeParentId = args?.parent_agent_id as string;
         const cascadeReason = args?.reason as string;
 
@@ -608,7 +614,7 @@ async function main(): Promise<void> {
         };
       }
 
-      case "fidelis_identity_tree": {
+      case "atlas_identity_tree": {
         const treeRootId = args?.agent_id as string;
         if (!treeRootId) {
           return { content: [{ type: "text" as const, text: "Error: agent_id is required" }], isError: true };
@@ -638,7 +644,7 @@ async function main(): Promise<void> {
 
       // -- Baseline tools (v0.7.0) ------------------------------------------
 
-      case "fidelis_baseline_get": {
+      case "atlas_baseline_get": {
         const baselineAgentId = args?.agent_id as string;
         if (!baselineAgentId) {
           return { content: [{ type: "text" as const, text: "Error: agent_id is required" }], isError: true };
@@ -652,7 +658,7 @@ async function main(): Promise<void> {
         return { content: [{ type: "text" as const, text: JSON.stringify(display, null, 2) }] };
       }
 
-      case "fidelis_baseline_drift": {
+      case "atlas_baseline_drift": {
         const driftAgentId = args?.agent_id as string;
         if (!driftAgentId) {
           return { content: [{ type: "text" as const, text: "Error: agent_id is required" }], isError: true };
@@ -690,7 +696,7 @@ async function main(): Promise<void> {
         return { content: [{ type: "text" as const, text: JSON.stringify(driftResult, null, 2) }] };
       }
 
-      case "fidelis_baseline_list": {
+      case "atlas_baseline_list": {
         const matFilter = args?.maturity as string | undefined;
         const roleFilter = args?.role as string | undefined;
         const allBaselines = await baselineStore.list({
@@ -702,7 +708,7 @@ async function main(): Promise<void> {
         return { content: [{ type: "text" as const, text: JSON.stringify(summaries, null, 2) }] };
       }
 
-      case "fidelis_why_assess": {
+      case "atlas_why_assess": {
         const whyAgentId = args?.agent_id as string | undefined;
         const windowMin = typeof args?.window_minutes === "number" ? args.window_minutes : whyConfig.windowMinutes;
         const windowSz = typeof args?.window_size === "number" ? args.window_size : whyConfig.windowSize;
@@ -856,12 +862,27 @@ async function main(): Promise<void> {
         },
       });
 
+      // Format human-readable denial reason
+      let denyDetail = escapeHtml(attestation.denyReason);
+      if (attestation.denyReason === "CREDENTIAL_EXPIRED") {
+        const expiredAt = attestation.credentialExpiry
+          ? new Date(attestation.credentialExpiry).toLocaleString()
+          : "unknown";
+        denyDetail = `Credential <b>expired</b> at ${escapeHtml(expiredAt)} — re-register with <code>atlas_identity_register</code>`;
+      } else if (attestation.denyReason === "CREDENTIAL_REVOKED") {
+        denyDetail = "Credential has been <b>revoked</b>";
+      } else if (attestation.denyReason === "UNREGISTERED_AGENT") {
+        denyDetail = "Agent not registered — use <code>atlas_identity_register</code>";
+      } else if (attestation.denyReason === "CAPABILITY_MISMATCH") {
+        denyDetail = `Agent lacks required capability for <code>${escapeHtml(req.tool_name)}</code>`;
+      }
+
       await telegram
         .sendReply(
-          `🚫 <b>IDENTITY DENIED</b> by Fidelis attestation:\n` +
+          `🚫 <b>IDENTITY DENIED</b> by Atlas attestation:\n` +
             `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
             `Agent: <code>${escapeHtml(attestation.agentId)}</code>\n` +
-            `Reason: ${escapeHtml(attestation.denyReason)}`,
+            `Reason: ${denyDetail}`,
           { broadcast: true }
         )
         .catch(() => {});
@@ -905,7 +926,7 @@ async function main(): Promise<void> {
         : "";
       await telegram
         .sendReply(
-          `🚫 <b>AUTO-DENIED</b> by Fidelis policy:\n` +
+          `🚫 <b>AUTO-DENIED</b> by Atlas policy:\n` +
             `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
             `Agent: <code>${escapeHtml(attestation.agentId)}</code>\n` +
             `Reason: ${escapeHtml(reason)}${mitreTag}${sensitivityInfo}`,
@@ -1012,11 +1033,86 @@ async function main(): Promise<void> {
         },
       })
       .catch((err) => {
-        console.error("[fidelis] Failed to emit channel notification:", err);
+        console.error("[atlas] Failed to emit channel notification:", err);
       });
   });
 
   // =========================================================================
+  // =========================================================================
+  // TTL Expiry Watchdog — proactive Telegram warnings before credentials expire
+  // =========================================================================
+
+  const TTL_CHECK_INTERVAL_MS = 5 * 60_000; // check every 5 minutes
+  const TTL_WARNING_THRESHOLD = 0.80; // warn at 80% of TTL elapsed
+  const warnedCredentials = new Set<string>(); // track already-warned agentIds
+  const expiredNotified = new Set<string>(); // track already-notified expirations
+
+  const ttlWatchdog = setInterval(() => {
+    const now = Date.now();
+
+    for (const cred of registry.list("all")) {
+      if (cred.revoked) continue;
+      const expiresAtMs = new Date(cred.expiresAt).getTime();
+      const issuedAtMs = new Date(cred.issuedAt).getTime();
+      const totalTtlMs = expiresAtMs - issuedAtMs;
+      const elapsedMs = now - issuedAtMs;
+      const remainingMs = expiresAtMs - now;
+
+      // Already expired — send one-time expiry notification
+      if (remainingMs <= 0) {
+        if (!expiredNotified.has(cred.agentId)) {
+          expiredNotified.add(cred.agentId);
+          const { timeRemainingHuman } = credentialTimeRemaining(cred.expiresAt);
+          telegram
+            .sendReply(
+              `⏰ <b>CREDENTIAL EXPIRED</b>\n` +
+                `Agent: <code>${escapeHtml(cred.agentId)}</code>\n` +
+                `Name: ${escapeHtml(cred.name)}\n` +
+                `Expired at: ${escapeHtml(new Date(cred.expiresAt).toLocaleString())}\n` +
+                `Action: re-register with <code>atlas_identity_register</code>`,
+              { broadcast: true }
+            )
+            .catch(() => {});
+          audit.log("CREDENTIAL_EXPIRED", {
+            meta: { agentId: cred.agentId, name: cred.name, expiresAt: cred.expiresAt },
+          });
+        }
+        continue;
+      }
+
+      // Approaching expiry — warn at 80% threshold
+      if (totalTtlMs > 0 && elapsedMs / totalTtlMs >= TTL_WARNING_THRESHOLD) {
+        if (!warnedCredentials.has(cred.agentId)) {
+          warnedCredentials.add(cred.agentId);
+          const { timeRemainingHuman } = credentialTimeRemaining(cred.expiresAt);
+          telegram
+            .sendReply(
+              `⚠️ <b>CREDENTIAL EXPIRING SOON</b>\n` +
+                `Agent: <code>${escapeHtml(cred.agentId)}</code>\n` +
+                `Name: ${escapeHtml(cred.name)}\n` +
+                `Time remaining: <b>${escapeHtml(timeRemainingHuman)}</b>\n` +
+                `Expires at: ${escapeHtml(new Date(cred.expiresAt).toLocaleString())}\n` +
+                `Action: re-register before expiry to avoid denial`,
+              { broadcast: true }
+            )
+            .catch(() => {});
+          audit.log("CREDENTIAL_EXPIRY_WARNING", {
+            meta: {
+              agentId: cred.agentId,
+              name: cred.name,
+              expiresAt: cred.expiresAt,
+              timeRemainingMs: remainingMs,
+              timeRemainingHuman,
+            },
+          });
+        }
+      }
+    }
+  }, TTL_CHECK_INTERVAL_MS);
+
+  // Don't let the watchdog keep the process alive
+  ttlWatchdog.unref();
+
   // Start
   // =========================================================================
 
@@ -1025,17 +1121,17 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await mcp.connect(transport);
 
-  console.error(`[fidelis] Fidelis Channel v${VERSION} active`);
-  console.error(`[fidelis] Telegram token: ${config.telegram_bot_token ? "configured" : "NOT configured"}`);
+  console.error(`[atlas] Atlas Protocol v${VERSION} active`);
+  console.error(`[atlas] Telegram token: ${config.telegram_bot_token ? "configured" : "NOT configured"}`);
   console.error(
-    `[fidelis] Authorized chats: ${config.telegram_allowed_chat_ids.join(", ") || "none (locked until configured)"}`
+    `[atlas] Authorized chats: ${config.telegram_allowed_chat_ids.join(", ") || "none (locked until configured)"}`
   );
-  console.error(`[fidelis] Policy rules: ${config.policy_rules.length}`);
-  console.error(`[fidelis] Timeout: ${config.permission_timeout_seconds}s (fail-closed)`);
-  console.error(`[fidelis] Audit log: ${config.audit_log_path} (SHA3-256 chain)`);
-  console.error(`[fidelis] ML-DSA-65 signing: ${signer.available ? `active (key: ${signer.getPublicKeyHash()?.slice(0, 16)}...)` : "unavailable"}`);
-  console.error(`[fidelis] Agent registry: ${registry.size} credentials (${registry.isEmpty() ? "bootstrap mode" : "active"})`);
-  console.error(`[fidelis] Identity: ${identityContext.loaded ? `${identityContext.principal_label} (Tier ${identityContext.max_tier_present})` : "standalone (no briefcase)"}`);
+  console.error(`[atlas] Policy rules: ${config.policy_rules.length}`);
+  console.error(`[atlas] Timeout: ${config.permission_timeout_seconds}s (fail-closed)`);
+  console.error(`[atlas] Audit log: ${config.audit_log_path} (SHA3-256 chain)`);
+  console.error(`[atlas] ML-DSA-65 signing: ${signer.available ? `active (key: ${signer.getPublicKeyHash()?.slice(0, 16)}...)` : "unavailable"}`);
+  console.error(`[atlas] Agent registry: ${registry.size} credentials (${registry.isEmpty() ? "bootstrap mode" : "active"})`);
+  console.error(`[atlas] Identity: ${identityContext.loaded ? `${identityContext.principal_label} (Tier ${identityContext.max_tier_present})` : "standalone (no briefcase)"}`);
 }
 
 function sendVerdict(mcp: Server, requestId: string, behavior: "allow" | "deny"): void {
@@ -1048,8 +1144,20 @@ function sendVerdict(mcp: Server, requestId: string, behavior: "allow" | "deny")
       },
     })
     .catch((err) => {
-      console.error("[fidelis] Failed to send verdict:", err);
+      console.error("[atlas] Failed to send verdict:", err);
     });
+}
+
+/**
+ * Compute time-remaining fields for a credential.
+ */
+function credentialTimeRemaining(expiresAt: string): { timeRemainingMs: number; timeRemainingHuman: string } {
+  const ms = new Date(expiresAt).getTime() - Date.now();
+  if (ms <= 0) return { timeRemainingMs: 0, timeRemainingHuman: "expired" };
+  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.floor((ms % 3_600_000) / 60_000);
+  if (hours > 0) return { timeRemainingMs: ms, timeRemainingHuman: `${hours}h ${minutes}m` };
+  return { timeRemainingMs: ms, timeRemainingHuman: `${minutes}m` };
 }
 
 function escapeHtml(text: string): string {
@@ -1061,6 +1169,6 @@ function escapeHtml(text: string): string {
 }
 
 main().catch((err) => {
-  console.error("[fidelis] Fatal error:", err);
+  console.error("[atlas] Fatal error:", err);
   process.exit(1);
 });

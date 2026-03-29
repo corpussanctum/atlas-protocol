@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Audit Log (v0.4.0)
+ * Atlas Protocol — Audit Log (v0.4.0)
  *
  * Append-only JSONL log with:
  *   - SHA3-256 hash chaining (tamper-evident, quantum-resistant hash)
@@ -19,7 +19,7 @@
 import { createHmac, createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { FidelisConfig } from "./config.js";
+import type { AtlasConfig } from "./config.js";
 import type { PolicyResult, PermissionRequest } from "./policy-engine.js";
 import type { QuantumSigner } from "./quantum-signer.js";
 import { enrichMitre } from "./mitre-attack.js";
@@ -41,7 +41,9 @@ export type AuditEventType =
   | "CHANNEL_MESSAGE"
   | "SESSION_START"
   | "CONFIG_LOADED"
-  | "IDENTITY_LOADED";
+  | "IDENTITY_LOADED"
+  | "CREDENTIAL_EXPIRED"
+  | "CREDENTIAL_EXPIRY_WARNING";
 
 export interface AuditEntry {
   id: string;
@@ -59,7 +61,7 @@ export interface AuditEntry {
   meta?: Record<string, unknown>;
 
   // -- Agent identity attestation (v0.5.0+) --------------------------------
-  /** DID of the attested agent (did:fidelis:<uuid>) */
+  /** DID of the attested agent (did:atlas:<uuid>) */
   agentId?: string;
   /** Whether the agent's credential was verified for this entry */
   identityVerified?: boolean;
@@ -121,7 +123,7 @@ export class AuditLogger {
   private redaction: RedactionConfig;
 
   constructor(
-    config: FidelisConfig,
+    config: AtlasConfig,
     redaction?: RedactionConfig,
     signer?: QuantumSigner | null,
   ) {
@@ -130,7 +132,7 @@ export class AuditLogger {
     this.signer = signer ?? null;
 
     // Redaction: merge forced privacy mode with identity-driven config
-    const forcePrivacy = process.env.FIDELIS_PRIVACY_MODE === "true";
+    const forcePrivacy = process.env.ATLAS_PRIVACY_MODE === "true";
     this.redaction = redaction ?? {
       redact_fields: forcePrivacy ? ["input_preview"] : [],
       force_privacy: forcePrivacy,

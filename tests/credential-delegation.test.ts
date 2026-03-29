@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Credential Delegation (v0.6.0)
+ * Tests for Atlas Protocol — Credential Delegation (v0.6.0)
  *
  * Covers: validateDelegation, isDelegatedCredential, registry.delegate(),
  * registry.getChildren(), registry.getDescendants(), registry.cascadeRevoke(),
@@ -32,7 +32,7 @@ import type {
 let tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "fidelis-delegation-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "atlas-delegation-test-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -62,7 +62,7 @@ async function createRegistry(): Promise<{ registry: IdentityRegistry; dir: stri
 function mockCredential(overrides: Partial<AgentCredential> = {}): AgentCredential {
   const now = new Date();
   return {
-    agentId: overrides.agentId ?? "did:fidelis:mock-parent",
+    agentId: overrides.agentId ?? "did:atlas:mock-parent",
     name: overrides.name ?? "mock-agent",
     role: overrides.role ?? "claude-code",
     issuedAt: overrides.issuedAt ?? now.toISOString(),
@@ -89,8 +89,8 @@ function mockDelegatedCredential(
     ...base,
     delegated: true,
     delegation: {
-      rootId: "did:fidelis:root",
-      parentId: "did:fidelis:mock-parent",
+      rootId: "did:atlas:root",
+      parentId: "did:atlas:mock-parent",
       depth,
       chainSignature: "chainsig",
     },
@@ -112,14 +112,14 @@ function mockRegistry(credentials: Map<string, AgentCredential>) {
 describe("validateDelegation", () => {
   it("returns valid for legitimate subset request", () => {
     const parent = mockCredential({
-      agentId: "did:fidelis:parent-1",
+      agentId: "did:atlas:parent-1",
       capabilities: ["file:read", "shell:exec"],
     });
-    const reg = mockRegistry(new Map([["did:fidelis:parent-1", parent]]));
+    const reg = mockRegistry(new Map([["did:atlas:parent-1", parent]]));
 
     const result = validateDelegation(
       {
-        parentAgentId: "did:fidelis:parent-1",
+        parentAgentId: "did:atlas:parent-1",
         childName: "child",
         childRole: "observer",
         capabilities: ["file:read"],
@@ -133,14 +133,14 @@ describe("validateDelegation", () => {
 
   it("rejects CAPABILITY_ESCALATION when child has capability parent lacks", () => {
     const parent = mockCredential({
-      agentId: "did:fidelis:parent-2",
+      agentId: "did:atlas:parent-2",
       capabilities: ["file:read"],
     });
-    const reg = mockRegistry(new Map([["did:fidelis:parent-2", parent]]));
+    const reg = mockRegistry(new Map([["did:atlas:parent-2", parent]]));
 
     const result = validateDelegation(
       {
-        parentAgentId: "did:fidelis:parent-2",
+        parentAgentId: "did:atlas:parent-2",
         childName: "child",
         childRole: "tool-caller",
         capabilities: ["file:read", "shell:exec"],
@@ -154,14 +154,14 @@ describe("validateDelegation", () => {
 
   it("rejects DEPTH_EXCEEDED when depth > 3", () => {
     const parent = mockDelegatedCredential(3, {
-      agentId: "did:fidelis:deep-parent",
+      agentId: "did:atlas:deep-parent",
       capabilities: ["file:read"],
     });
-    const reg = mockRegistry(new Map([["did:fidelis:deep-parent", parent]]));
+    const reg = mockRegistry(new Map([["did:atlas:deep-parent", parent]]));
 
     const result = validateDelegation(
       {
-        parentAgentId: "did:fidelis:deep-parent",
+        parentAgentId: "did:atlas:deep-parent",
         childName: "child",
         childRole: "observer",
         capabilities: ["file:read"],
@@ -176,15 +176,15 @@ describe("validateDelegation", () => {
   it("rejects TTL_EXCEEDS_PARENT when child outlives parent", () => {
     const parentExpiry = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours
     const parent = mockCredential({
-      agentId: "did:fidelis:short-parent",
+      agentId: "did:atlas:short-parent",
       expiresAt: parentExpiry.toISOString(),
       capabilities: ["file:read"],
     });
-    const reg = mockRegistry(new Map([["did:fidelis:short-parent", parent]]));
+    const reg = mockRegistry(new Map([["did:atlas:short-parent", parent]]));
 
     const result = validateDelegation(
       {
-        parentAgentId: "did:fidelis:short-parent",
+        parentAgentId: "did:atlas:short-parent",
         childName: "child",
         childRole: "observer",
         capabilities: ["file:read"],
@@ -199,15 +199,15 @@ describe("validateDelegation", () => {
 
   it("rejects PARENT_EXPIRED when parent has expired", () => {
     const parent = mockCredential({
-      agentId: "did:fidelis:expired-parent",
+      agentId: "did:atlas:expired-parent",
       expiresAt: new Date(Date.now() - 1000).toISOString(), // 1 second ago
       capabilities: ["file:read"],
     });
-    const reg = mockRegistry(new Map([["did:fidelis:expired-parent", parent]]));
+    const reg = mockRegistry(new Map([["did:atlas:expired-parent", parent]]));
 
     const result = validateDelegation(
       {
-        parentAgentId: "did:fidelis:expired-parent",
+        parentAgentId: "did:atlas:expired-parent",
         childName: "child",
         childRole: "observer",
         capabilities: ["file:read"],
@@ -221,16 +221,16 @@ describe("validateDelegation", () => {
 
   it("rejects PARENT_REVOKED when parent is revoked", () => {
     const parent = mockCredential({
-      agentId: "did:fidelis:revoked-parent",
+      agentId: "did:atlas:revoked-parent",
       revoked: true,
       revokedReason: "Compromised",
       capabilities: ["file:read"],
     });
-    const reg = mockRegistry(new Map([["did:fidelis:revoked-parent", parent]]));
+    const reg = mockRegistry(new Map([["did:atlas:revoked-parent", parent]]));
 
     const result = validateDelegation(
       {
-        parentAgentId: "did:fidelis:revoked-parent",
+        parentAgentId: "did:atlas:revoked-parent",
         childName: "child",
         childRole: "observer",
         capabilities: ["file:read"],
@@ -247,7 +247,7 @@ describe("validateDelegation", () => {
 
     const result = validateDelegation(
       {
-        parentAgentId: "did:fidelis:nonexistent",
+        parentAgentId: "did:atlas:nonexistent",
         childName: "child",
         childRole: "observer",
         capabilities: ["file:read"],

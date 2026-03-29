@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Why Triggers (v0.6.0)
+ * Tests for Atlas Protocol — Why Triggers (v0.6.0)
  *
  * Covers: shouldTrigger, formatTelegramAlert
  */

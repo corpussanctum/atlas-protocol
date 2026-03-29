@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Quantum Signer (ML-DSA-65)
+ * Atlas Protocol — Quantum Signer (ML-DSA-65)
  *
  * Post-quantum digital signatures for audit log entries using ML-DSA-65
  * (FIPS 204, formerly CRYSTALS-Dilithium). Designed for harvest-now-decrypt-later
@@ -82,7 +82,7 @@ export class QuantumSigner {
       this.ml_dsa65 = mod.ml_dsa65 as MlDsa65;
     } catch {
       console.error(
-        "[fidelis] WARNING: @noble/post-quantum not available — " +
+        "[atlas] WARNING: @noble/post-quantum not available — " +
         "audit entries will not have ML-DSA-65 signatures. " +
         "Install with: npm install @noble/post-quantum"
       );
@@ -106,7 +106,7 @@ export class QuantumSigner {
         this.publicKeyHash = raw.public_key_hash;
         return;
       } catch {
-        console.error("[fidelis] WARNING: corrupt quantum keypair file, regenerating");
+        console.error("[atlas] WARNING: corrupt quantum keypair file, regenerating");
       }
     }
 
@@ -143,7 +143,7 @@ export class QuantumSigner {
     }
 
     console.error(
-      `[fidelis] Generated ML-DSA-65 keypair — public key hash: ${this.publicKeyHash.slice(0, 16)}...`
+      `[atlas] Generated ML-DSA-65 keypair — public key hash: ${this.publicKeyHash.slice(0, 16)}...`
     );
   }
 
@@ -179,7 +179,7 @@ export class QuantumSigner {
   }
 
   /**
-   * Get runtime status for the fidelis_status tool.
+   * Get runtime status for the atlas_status tool.
    */
   getStatus(): QuantumSignerStatus {
     return {

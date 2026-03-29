@@ -1,4 +1,4 @@
-# Fidelis Channel revision notes — v0.2.2
+# Atlas Protocol revision notes — v0.2.2
 
 ## What changed in this pass
 

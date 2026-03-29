@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Attestation Layer (v0.5.0)
+ * Atlas Protocol — Attestation Layer (v0.5.0)
  *
  * Binds agent identity to audit entries and permission decisions.
  * This is the glue between the identity registry and the gatekeeper flow.
@@ -54,7 +54,7 @@ const TOOL_CAPABILITY_MAP: Record<string, AgentCapability> = {
 };
 
 /**
- * Map a Claude Code tool name to the required Fidelis capability.
+ * Map a Claude Code tool name to the required Atlas capability.
  * Returns undefined if no specific capability is required.
  */
 export function toolToCapability(toolName: string): AgentCapability | undefined {

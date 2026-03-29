@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — MITRE ATT&CK Enrichment
+ * Atlas Protocol — MITRE ATT&CK Enrichment
  *
  * Static lookup table mapping technique IDs used in the default policy rules
  * to their human-readable names and tactics. This enables structured audit

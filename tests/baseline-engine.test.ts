@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Baseline Engine (v0.7.0)
+ * Tests for Atlas Protocol — Baseline Engine (v0.7.0)
  *
  * Covers: createEmptyProfile, calculateMaturity, calculateRiskDistribution,
  * recalculateProfile, ingestEntry, ingestAssessment, detectDrift, getBaselineContext
@@ -30,7 +30,7 @@ import type { ExpertAssessment } from "../src/why-engine.js";
 // ---------------------------------------------------------------------------
 
 function createTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "fidelis-engine-test-"));
+  return mkdtempSync(join(tmpdir(), "atlas-engine-test-"));
 }
 
 let seq = 0;
@@ -55,7 +55,7 @@ function mockProfile(overrides: Partial<BaselineProfile> = {}): BaselineProfile 
   }
 
   return {
-    agentId: overrides.agentId ?? "did:fidelis:test-agent",
+    agentId: overrides.agentId ?? "did:atlas:test-agent",
     agentName: overrides.agentName ?? "Test Agent",
     agentRole: overrides.agentRole ?? "assistant",
     createdAt: overrides.createdAt ?? now,
@@ -127,9 +127,9 @@ afterEach(() => {
 
 describe("createEmptyProfile", () => {
   it("sets correct defaults", () => {
-    const profile = createEmptyProfile("did:fidelis:new", "New Agent", "assistant");
+    const profile = createEmptyProfile("did:atlas:new", "New Agent", "assistant");
 
-    assert.equal(profile.agentId, "did:fidelis:new");
+    assert.equal(profile.agentId, "did:atlas:new");
     assert.equal(profile.agentName, "New Agent");
     assert.equal(profile.agentRole, "assistant");
     assert.equal(profile.totalSessions, 0);
@@ -242,14 +242,14 @@ describe("ingestEntry", () => {
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
 
-    const entry = mockAuditEntry({ agentId: "did:fidelis:new-agent", verdict: "allow" });
+    const entry = mockAuditEntry({ agentId: "did:atlas:new-agent", verdict: "allow" });
     const profile = await ingestEntry(entry, store);
 
-    assert.equal(profile.agentId, "did:fidelis:new-agent");
+    assert.equal(profile.agentId, "did:atlas:new-agent");
     assert.equal(profile.totalEvents, 1);
 
     // Verify it was persisted
-    const stored = await store.get("did:fidelis:new-agent");
+    const stored = await store.get("did:atlas:new-agent");
     assert.ok(stored);
   });
 
@@ -258,10 +258,10 @@ describe("ingestEntry", () => {
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
 
-    const entry1 = mockAuditEntry({ agentId: "did:fidelis:counter", verdict: "allow" });
+    const entry1 = mockAuditEntry({ agentId: "did:atlas:counter", verdict: "allow" });
     await ingestEntry(entry1, store);
 
-    const entry2 = mockAuditEntry({ agentId: "did:fidelis:counter", verdict: "allow" });
+    const entry2 = mockAuditEntry({ agentId: "did:atlas:counter", verdict: "allow" });
     const profile = await ingestEntry(entry2, store);
 
     assert.equal(profile.totalEvents, 2);
@@ -273,7 +273,7 @@ describe("ingestEntry", () => {
     const store = new BaselineStore(dir);
 
     const entry = mockAuditEntry({
-      agentId: "did:fidelis:deny-test",
+      agentId: "did:atlas:deny-test",
       verdict: "deny",
       event: "POLICY_DENY",
     });
@@ -289,7 +289,7 @@ describe("ingestEntry", () => {
     const store = new BaselineStore(dir);
 
     const entry = mockAuditEntry({
-      agentId: "did:fidelis:mitre-test",
+      agentId: "did:atlas:mitre-test",
       verdict: "allow",
       mitre: { id: "T1059", name: "Command and Scripting Interpreter", tactic: "Execution" },
     });
@@ -308,7 +308,7 @@ describe("ingestEntry", () => {
     // Use a specific timestamp so we know the hour
     const ts = "2026-03-28T14:30:00.000Z"; // UTC hour 14
     const entry = mockAuditEntry({
-      agentId: "did:fidelis:temporal-test",
+      agentId: "did:atlas:temporal-test",
       timestamp: ts,
       verdict: "allow",
     });
@@ -472,7 +472,7 @@ describe("ingestAssessment", () => {
     const store = new BaselineStore(dir);
 
     // Create a profile first via ingestEntry
-    const entry = mockAuditEntry({ agentId: "did:fidelis:assess-test", verdict: "allow" });
+    const entry = mockAuditEntry({ agentId: "did:atlas:assess-test", verdict: "allow" });
     await ingestEntry(entry, store);
 
     const assessment = {
@@ -498,9 +498,9 @@ describe("ingestAssessment", () => {
       },
     };
 
-    await ingestAssessment("did:fidelis:assess-test", assessment, "TEST_TRIGGER", store);
+    await ingestAssessment("did:atlas:assess-test", assessment, "TEST_TRIGGER", store);
 
-    const profile = await store.get("did:fidelis:assess-test");
+    const profile = await store.get("did:atlas:assess-test");
     assert.ok(profile);
     assert.equal(profile.whyHistory.length, 1);
     assert.equal(profile.whyHistory[0].overallRisk, "low");

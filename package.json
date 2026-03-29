@@ -1,11 +1,11 @@
 {
-  "name": "fidelis-channel",
+  "name": "atlas-protocol",
   "version": "0.7.0",
   "description": "Telegram approval channel for Claude Code with fail-closed permission relay, policy rules, and tamper-evident audit logging.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "fidelis-channel": "dist/index.js"
+    "atlas-protocol": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -27,11 +27,11 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/corpussanctum/fidelis-channel.git"
+    "url": "https://github.com/corpussanctum/atlas-protocol.git"
   },
-  "homepage": "https://github.com/corpussanctum/fidelis-channel#readme",
+  "homepage": "https://github.com/corpussanctum/atlas-protocol#readme",
   "bugs": {
-    "url": "https://github.com/corpussanctum/fidelis-channel/issues"
+    "url": "https://github.com/corpussanctum/atlas-protocol/issues"
   },
   "files": [
     "dist/",

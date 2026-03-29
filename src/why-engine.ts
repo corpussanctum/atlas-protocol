@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Why Engine (v0.6.0)
+ * Atlas Protocol — Why Engine (v0.6.0)
  *
  * Council of Experts (CoE) reasoning engine: three lightweight LLM agents
  * (anomaly detector, intent analyst, threat narrator) reason over audit event

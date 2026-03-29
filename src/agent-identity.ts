@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Agent Identity (v0.5.0)
+ * Atlas Protocol — Agent Identity (v0.5.0)
  *
  * Core credential system for agent identity attestation. Every agent that
  * passes through the gatekeeper must present a signed identity credential.
@@ -11,7 +11,7 @@
  *   4. Credential is verified on each permission request
  *   5. Credentials can be revoked by the operator
  *
- * DID format: did:fidelis:<uuid>
+ * DID format: did:atlas:<uuid>
  */
 
 import { createHash, randomUUID, randomBytes } from "node:crypto";
@@ -109,7 +109,7 @@ export async function initAgentIdentity(): Promise<boolean> {
 // Constants
 // ---------------------------------------------------------------------------
 
-const FIDELIS_DID_PREFIX = "did:fidelis:";
+const ATLAS_DID_PREFIX = "did:atlas:";
 const CREDENTIAL_VERSION = "0.5.0";
 const DEFAULT_TTL_HOURS = 24;
 
@@ -171,7 +171,7 @@ export function issueCredential(
   const expiresAt = new Date(now.getTime() + ttlHours * 60 * 60 * 1000);
 
   const partial: Omit<AgentCredential, "issuerSignature" | "credentialHash"> = {
-    agentId: FIDELIS_DID_PREFIX + randomUUID(),
+    agentId: ATLAS_DID_PREFIX + randomUUID(),
     name: request.name,
     role: request.role,
     issuedAt: now.toISOString(),
@@ -313,7 +313,7 @@ export function issueCredentialWithKey(
   const expiresAt = new Date(now.getTime() + ttlHours * 60 * 60 * 1000);
 
   const partial: Omit<AgentCredential, "issuerSignature" | "credentialHash"> = {
-    agentId: FIDELIS_DID_PREFIX + randomUUID(),
+    agentId: ATLAS_DID_PREFIX + randomUUID(),
     name: request.name,
     role: request.role,
     issuedAt: now.toISOString(),
@@ -348,8 +348,8 @@ export function issueCredentialWithKey(
 // ---------------------------------------------------------------------------
 
 export interface DelegationChain {
-  rootId: string;              // did:fidelis:<uuid> — the original issuer
-  parentId: string;            // did:fidelis:<uuid> — direct parent
+  rootId: string;              // did:atlas:<uuid> — the original issuer
+  parentId: string;            // did:atlas:<uuid> — direct parent
   depth: number;               // 0 = root, 1 = first delegation, max 3
   chainSignature: string;      // ML-DSA-65 sign of [rootId+parentId+childId]
 }
@@ -496,7 +496,7 @@ export function delegateCredential(
 
   // Generate child keypair
   const childKeyPair = generateAgentKeyPair();
-  const childAgentId = FIDELIS_DID_PREFIX + randomUUID();
+  const childAgentId = ATLAS_DID_PREFIX + randomUUID();
 
   // Build chain signature: ML-DSA-65 sign of rootId+parentId+childId
   const chainMessage = rootId + parent.agentId + childAgentId;
@@ -580,7 +580,7 @@ export function delegateCredentialWithKey(
   const childExpiry = new Date(now.getTime() + childTtlMs);
 
   const childKeyPair = generateAgentKeyPair();
-  const childAgentId = FIDELIS_DID_PREFIX + randomUUID();
+  const childAgentId = ATLAS_DID_PREFIX + randomUUID();
 
   const chainMessage = rootId + parent.agentId + childAgentId;
   const chainMessageBytes = new Uint8Array(Buffer.from(chainMessage));

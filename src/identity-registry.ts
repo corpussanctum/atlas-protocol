@@ -1,5 +1,5 @@
 /**
- * Fidelis Channel — Identity Registry (v0.5.0)
+ * Atlas Protocol — Identity Registry (v0.5.0)
  *
  * In-memory registry of agent credentials with JSON file persistence.
  * The gatekeeper's QuantumSigner provides the issuer key for signing
@@ -361,7 +361,7 @@ export class IdentityRegistry {
         }
       }
     } catch {
-      console.error("[fidelis] WARNING: corrupt identity registry file, starting fresh");
+      console.error("[atlas] WARNING: corrupt identity registry file, starting fresh");
     }
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Baseline Store (v0.7.0)
+ * Tests for Atlas Protocol — Baseline Store (v0.7.0)
  *
  * Covers: save, get, list, delete, count, graceful error handling
  */
@@ -17,7 +17,7 @@ import type { BaselineProfile } from "../src/baseline-types.js";
 // ---------------------------------------------------------------------------
 
 function createTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "fidelis-baseline-test-"));
+  return mkdtempSync(join(tmpdir(), "atlas-baseline-test-"));
 }
 
 function mockProfile(agentId: string, overrides?: Partial<BaselineProfile>): BaselineProfile {
@@ -85,7 +85,7 @@ describe("BaselineStore", () => {
     const dir = createTempDir();
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
-    const profile = mockProfile("did:fidelis:agent-1");
+    const profile = mockProfile("did:atlas:agent-1");
 
     await store.save(profile);
 
@@ -97,13 +97,13 @@ describe("BaselineStore", () => {
     const dir = createTempDir();
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
-    const profile = mockProfile("did:fidelis:agent-2");
+    const profile = mockProfile("did:atlas:agent-2");
 
     await store.save(profile);
-    const retrieved = await store.get("did:fidelis:agent-2");
+    const retrieved = await store.get("did:atlas:agent-2");
 
     assert.ok(retrieved);
-    assert.equal(retrieved.agentId, "did:fidelis:agent-2");
+    assert.equal(retrieved.agentId, "did:atlas:agent-2");
     assert.equal(retrieved.totalSessions, 15);
     assert.equal(retrieved.maturityLevel, "developing");
   });
@@ -113,7 +113,7 @@ describe("BaselineStore", () => {
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
 
-    const result = await store.get("did:fidelis:nonexistent");
+    const result = await store.get("did:atlas:nonexistent");
     assert.equal(result, undefined);
   });
 
@@ -122,13 +122,13 @@ describe("BaselineStore", () => {
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
 
-    const profile1 = mockProfile("did:fidelis:agent-3", { totalSessions: 10 });
+    const profile1 = mockProfile("did:atlas:agent-3", { totalSessions: 10 });
     await store.save(profile1);
 
-    const profile2 = mockProfile("did:fidelis:agent-3", { totalSessions: 50 });
+    const profile2 = mockProfile("did:atlas:agent-3", { totalSessions: 50 });
     await store.save(profile2);
 
-    const retrieved = await store.get("did:fidelis:agent-3");
+    const retrieved = await store.get("did:atlas:agent-3");
     assert.ok(retrieved);
     assert.equal(retrieved.totalSessions, 50);
 
@@ -141,9 +141,9 @@ describe("BaselineStore", () => {
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
 
-    await store.save(mockProfile("did:fidelis:a1"));
-    await store.save(mockProfile("did:fidelis:a2"));
-    await store.save(mockProfile("did:fidelis:a3"));
+    await store.save(mockProfile("did:atlas:a1"));
+    await store.save(mockProfile("did:atlas:a2"));
+    await store.save(mockProfile("did:atlas:a3"));
 
     const all = await store.list();
     assert.equal(all.length, 3);
@@ -154,16 +154,16 @@ describe("BaselineStore", () => {
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
 
-    await store.save(mockProfile("did:fidelis:b1", { maturityLevel: "developing" }));
-    await store.save(mockProfile("did:fidelis:b2", { maturityLevel: "established" }));
-    await store.save(mockProfile("did:fidelis:b3", { maturityLevel: "developing" }));
+    await store.save(mockProfile("did:atlas:b1", { maturityLevel: "developing" }));
+    await store.save(mockProfile("did:atlas:b2", { maturityLevel: "established" }));
+    await store.save(mockProfile("did:atlas:b3", { maturityLevel: "developing" }));
 
     const developing = await store.list({ maturity: "developing" });
     assert.equal(developing.length, 2);
 
     const established = await store.list({ maturity: "established" });
     assert.equal(established.length, 1);
-    assert.equal(established[0].agentId, "did:fidelis:b2");
+    assert.equal(established[0].agentId, "did:atlas:b2");
   });
 
   it("list() filters by updatedAfter timestamp", async () => {
@@ -171,9 +171,9 @@ describe("BaselineStore", () => {
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
 
-    await store.save(mockProfile("did:fidelis:c1", { updatedAt: "2025-01-01T00:00:00Z" }));
-    await store.save(mockProfile("did:fidelis:c2", { updatedAt: "2026-03-01T00:00:00Z" }));
-    await store.save(mockProfile("did:fidelis:c3", { updatedAt: "2026-03-28T00:00:00Z" }));
+    await store.save(mockProfile("did:atlas:c1", { updatedAt: "2025-01-01T00:00:00Z" }));
+    await store.save(mockProfile("did:atlas:c2", { updatedAt: "2026-03-01T00:00:00Z" }));
+    await store.save(mockProfile("did:atlas:c3", { updatedAt: "2026-03-28T00:00:00Z" }));
 
     const recent = await store.list({ updatedAfter: "2026-02-01T00:00:00Z" });
     assert.equal(recent.length, 2);
@@ -184,10 +184,10 @@ describe("BaselineStore", () => {
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
 
-    await store.save(mockProfile("did:fidelis:d1"));
-    await store.save(mockProfile("did:fidelis:d2"));
+    await store.save(mockProfile("did:atlas:d1"));
+    await store.save(mockProfile("did:atlas:d2"));
 
-    await store.delete("did:fidelis:d1");
+    await store.delete("did:atlas:d1");
 
     const count = await store.count();
     assert.equal(count, 1);
@@ -198,19 +198,19 @@ describe("BaselineStore", () => {
     tempDirs.push(dir);
     const store = new BaselineStore(dir);
 
-    await store.save(mockProfile("did:fidelis:e1"));
-    await store.delete("did:fidelis:e1");
+    await store.save(mockProfile("did:atlas:e1"));
+    await store.delete("did:atlas:e1");
 
-    const result = await store.get("did:fidelis:e1");
+    const result = await store.get("did:atlas:e1");
     assert.equal(result, undefined);
   });
 
   it("handles missing data directory gracefully (no throw on get)", async () => {
-    const dir = join(tmpdir(), "fidelis-baseline-nonexistent-" + Date.now());
+    const dir = join(tmpdir(), "atlas-baseline-nonexistent-" + Date.now());
     tempDirs.push(dir);
     // BaselineStore constructor creates the dir, but get() on a non-existent file should not throw
     const store = new BaselineStore(dir);
-    const result = await store.get("did:fidelis:missing");
+    const result = await store.get("did:atlas:missing");
     assert.equal(result, undefined);
   });
 });

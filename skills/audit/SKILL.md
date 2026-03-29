@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Verify and inspect the Fidelis audit trail — check chain integrity, view recent decisions, export for compliance. Use when the user asks about audit logs, chain verification, or compliance evidence.
+description: Verify and inspect the Atlas audit trail — check chain integrity, view recent decisions, export for compliance. Use when the user asks about audit logs, chain verification, or compliance evidence.
 user-invocable: true
 allowed-tools:
   - Read
@@ -10,9 +10,9 @@ allowed-tools:
   - Bash(head *)
 ---
 
-# /fidelis:audit — Audit Trail Inspection
+# /atlas:audit — Audit Trail Inspection
 
-Inspect and verify the Fidelis Channel cryptographic audit log.
+Inspect and verify the Atlas Protocol cryptographic audit log.
 
 Arguments passed: `$ARGUMENTS`
 
@@ -22,17 +22,17 @@ Arguments passed: `$ARGUMENTS`
 
 ### No args — overview + verify
 
-1. Check `~/.fidelis-channel/audit.jsonl` exists
+1. Check `~/.atlas-protocol/audit.jsonl` exists
 2. Show entry count, file size, first and last timestamps
 3. Parse last 10 entries, show summary table:
    - Timestamp | Event | Tool | Verdict | Anomaly flags
-4. If the `fidelis_audit_verify` MCP tool is available, call it to verify
+4. If the `atlas_audit_verify` MCP tool is available, call it to verify
    chain integrity. Otherwise, note that verification requires an active
-   Fidelis Channel session.
+   Atlas Protocol session.
 
 ### `verify` — explicit chain verification
 
-If the `fidelis_audit_verify` tool is available, call it and show results.
+If the `atlas_audit_verify` tool is available, call it and show results.
 
 If not available (no active channel session), manually verify:
 1. Read each line of audit.jsonl
@@ -63,7 +63,7 @@ Parse entire audit log and compute:
 ### `export` — export for compliance
 
 Copy audit.jsonl to a timestamped file:
-`~/.fidelis-channel/exports/audit-YYYY-MM-DD.jsonl`
+`~/.atlas-protocol/exports/audit-YYYY-MM-DD.jsonl`
 
 Note that the exported file retains hash chain and HMAC signatures —
 it can be independently verified by anyone with the HMAC secret.

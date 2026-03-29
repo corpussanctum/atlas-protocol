@@ -1,5 +1,5 @@
 /**
- * Tests for Fidelis Channel — Why Engine (v0.6.0)
+ * Tests for Atlas Protocol — Why Engine (v0.6.0)
  *
  * Covers: buildResearchArtifact, synthesize, assessWindow, stubAssessment
  */
