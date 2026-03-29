@@ -222,6 +222,24 @@ export interface PeerStore {
 }
 
 // ---------------------------------------------------------------------------
+// Message ID log interface (replay protection)
+// ---------------------------------------------------------------------------
+
+/**
+ * Persistent dedup log for message IDs. Survives process restarts.
+ * Implementations MUST persist seen IDs to durable storage so that
+ * an adversary cannot replay messages by timing a restart.
+ */
+export interface MessageIdLog {
+  /** Returns true if this ID has been seen before. */
+  hasSeen(messageId: string): Promise<boolean>;
+  /** Record a message ID as seen. */
+  record(messageId: string): Promise<void>;
+  /** Number of IDs currently tracked. */
+  size(): Promise<number>;
+}
+
+// ---------------------------------------------------------------------------
 // Atlas bridge interface
 // ---------------------------------------------------------------------------
 

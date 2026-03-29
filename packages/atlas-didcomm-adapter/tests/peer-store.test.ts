@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { MockPeerStore, FilePeerStore } from "../src/peer-store.js";
+import { MockPeerStore, FilePeerStore, FileMessageIdLog } from "../src/peer-store.js";
 import type { PeerBinding } from "../src/types.js";
 
 function makePeer(overrides?: Partial<PeerBinding>): PeerBinding {
@@ -133,5 +133,60 @@ describe("FilePeerStore", () => {
     const store = new FilePeerStore(tmpDir);
     const all = await store.list();
     assert.equal(all.length, 0, "Corrupt file should result in empty store");
+  });
+});
+
+describe("FileMessageIdLog", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-idlog-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("records and detects seen message IDs", async () => {
+    const log = new FileMessageIdLog(tmpDir);
+    assert.equal(await log.hasSeen("msg-1"), false);
+    await log.record("msg-1");
+    assert.equal(await log.hasSeen("msg-1"), true);
+    assert.equal(await log.size(), 1);
+  });
+
+  it("persists IDs across instances (survives restart)", async () => {
+    const log1 = new FileMessageIdLog(tmpDir);
+    await log1.record("msg-restart-test");
+
+    // Simulate restart — create new instance over same dataDir
+    const log2 = new FileMessageIdLog(tmpDir);
+    assert.equal(await log2.hasSeen("msg-restart-test"), true,
+      "Message ID must survive process restart");
+  });
+
+  it("evicts oldest IDs when maxSize exceeded", async () => {
+    const log = new FileMessageIdLog(tmpDir, 3);
+    await log.record("a");
+    await log.record("b");
+    await log.record("c");
+    await log.record("d"); // should evict "a"
+    assert.equal(await log.hasSeen("a"), false, "Oldest ID should be evicted");
+    assert.equal(await log.hasSeen("d"), true);
+    assert.equal(await log.size(), 3);
+  });
+
+  it("handles corrupt file gracefully", async () => {
+    fs.writeFileSync(path.join(tmpDir, "didcomm-seen-ids.json"), "NOT JSON", "utf-8");
+    const log = new FileMessageIdLog(tmpDir);
+    assert.equal(await log.size(), 0);
+    assert.equal(await log.hasSeen("anything"), false);
+  });
+
+  it("writes file with mode 0600", async () => {
+    const log = new FileMessageIdLog(tmpDir);
+    await log.record("msg-perm-test");
+    const stat = fs.statSync(path.join(tmpDir, "didcomm-seen-ids.json"));
+    assert.equal(stat.mode & 0o777, 0o600);
   });
 });

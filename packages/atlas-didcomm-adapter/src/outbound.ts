@@ -24,6 +24,7 @@ import type {
   PeerStore,
   AtlasBridge,
   MessageClassifier,
+  MessageIdLog,
   DidcommMessage,
   OutboundResult,
 } from "./types.js";
@@ -35,9 +36,7 @@ import { buildSendAllow, buildSendDeny } from "./audit-events.js";
 // ---------------------------------------------------------------------------
 
 export class OutboundHandler {
-  /** Seen message IDs for replay/idempotency detection */
-  private readonly seenMessageIds: Set<string> = new Set();
-  private readonly maxSeenIds: number;
+  private readonly messageIdLog: MessageIdLog;
 
   constructor(
     private readonly transport: DidcommTransport,
@@ -45,9 +44,9 @@ export class OutboundHandler {
     private readonly atlas: AtlasBridge,
     private readonly classifier: MessageClassifier,
     private readonly mapper: PolicyMapper,
-    options?: { maxSeenMessageIds?: number },
+    messageIdLog?: MessageIdLog,
   ) {
-    this.maxSeenIds = options?.maxSeenMessageIds ?? 10_000;
+    this.messageIdLog = messageIdLog ?? new InMemoryIdLog();
   }
 
   async send(peerDid: string, msg: DidcommMessage): Promise<OutboundResult> {
@@ -72,12 +71,12 @@ export class OutboundHandler {
       if (scopeResult) return scopeResult;
     }
 
-    // Step 6: Replay/idempotency check
-    if (this.seenMessageIds.has(msg.id)) {
+    // Step 6: Replay/idempotency check (persisted across restarts)
+    if (await this.messageIdLog.hasSeen(msg.id)) {
       await this.logDeny(peerDid, msg.type, peer.mappedAgentId, "REPLAY_DETECTED");
       return { sent: false, reason: "REPLAY_DETECTED", event: "DIDCOMM_SEND_DENY" };
     }
-    this.recordMessageId(msg.id);
+    await this.messageIdLog.record(msg.id);
 
     // Step 7: Classify
     const classified = this.classifier.classifyOutbound(msg);
@@ -175,12 +174,12 @@ export class OutboundHandler {
   private async logDeny(peerDid: string, messageType: string | undefined, agentId: string | undefined, reason: string): Promise<void> {
     await this.atlas.logEvent(buildSendDeny({ peerDid, messageType, agentId, reason }));
   }
+}
 
-  private recordMessageId(id: string): void {
-    this.seenMessageIds.add(id);
-    if (this.seenMessageIds.size > this.maxSeenIds) {
-      const first = this.seenMessageIds.values().next().value;
-      if (first !== undefined) this.seenMessageIds.delete(first);
-    }
-  }
+/** Volatile fallback for dev/testing when no persistent log is provided */
+class InMemoryIdLog implements MessageIdLog {
+  private readonly ids = new Set<string>();
+  async hasSeen(id: string) { return this.ids.has(id); }
+  async record(id: string) { this.ids.add(id); }
+  async size() { return this.ids.size; }
 }

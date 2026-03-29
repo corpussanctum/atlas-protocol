@@ -8,7 +8,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { PeerBinding, PeerStore } from "./types.js";
+import type { PeerBinding, PeerStore, MessageIdLog } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // FilePeerStore — JSON file-backed persistence
@@ -110,5 +110,95 @@ export class MockPeerStore implements PeerStore {
 
   async delete(peerDid: string): Promise<void> {
     this.peers.delete(peerDid);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FileMessageIdLog — persistent replay protection
+// ---------------------------------------------------------------------------
+
+/**
+ * File-backed message ID dedup log. Survives process restarts.
+ * Storage: <dataDir>/didcomm-seen-ids.json (chmod 0600, atomic write).
+ * Bounded: evicts oldest IDs when maxSize is exceeded.
+ */
+export class FileMessageIdLog implements MessageIdLog {
+  private readonly filePath: string;
+  private readonly ids: Set<string> = new Set();
+  /** Insertion-ordered list for eviction (oldest first) */
+  private readonly order: string[] = [];
+  private readonly maxSize: number;
+
+  constructor(dataDir: string, maxSize: number = 50_000) {
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    this.filePath = path.join(dataDir, "didcomm-seen-ids.json");
+    this.maxSize = maxSize;
+    this.load();
+  }
+
+  async hasSeen(messageId: string): Promise<boolean> {
+    return this.ids.has(messageId);
+  }
+
+  async record(messageId: string): Promise<void> {
+    if (this.ids.has(messageId)) return; // already recorded
+    this.ids.add(messageId);
+    this.order.push(messageId);
+
+    // Evict oldest when full
+    while (this.order.length > this.maxSize) {
+      const oldest = this.order.shift();
+      if (oldest !== undefined) this.ids.delete(oldest);
+    }
+
+    this.save();
+  }
+
+  async size(): Promise<number> {
+    return this.ids.size;
+  }
+
+  private load(): void {
+    if (!fs.existsSync(this.filePath)) return;
+    try {
+      const raw = fs.readFileSync(this.filePath, "utf-8");
+      const data = JSON.parse(raw) as string[];
+      for (const id of data) {
+        this.ids.add(id);
+        this.order.push(id);
+      }
+    } catch {
+      // Corrupt — start empty
+      this.ids.clear();
+      this.order.length = 0;
+    }
+  }
+
+  private save(): void {
+    const tmpPath = this.filePath + ".tmp";
+    fs.writeFileSync(tmpPath, JSON.stringify(this.order), { encoding: "utf-8", mode: 0o600 });
+    fs.renameSync(tmpPath, this.filePath);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MockMessageIdLog — in-memory only (for tests)
+// ---------------------------------------------------------------------------
+
+export class MockMessageIdLog implements MessageIdLog {
+  private readonly ids: Set<string> = new Set();
+
+  async hasSeen(messageId: string): Promise<boolean> {
+    return this.ids.has(messageId);
+  }
+
+  async record(messageId: string): Promise<void> {
+    this.ids.add(messageId);
+  }
+
+  async size(): Promise<number> {
+    return this.ids.size;
   }
 }

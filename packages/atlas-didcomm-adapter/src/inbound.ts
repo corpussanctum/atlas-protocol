@@ -25,6 +25,7 @@ import type {
   PeerStore,
   AtlasBridge,
   MessageClassifier,
+  MessageIdLog,
   DidcommMessage,
   ClassifiedMessage,
   InboundResult,
@@ -37,9 +38,7 @@ import { buildReceiveAllow, buildReceiveDeny } from "./audit-events.js";
 // ---------------------------------------------------------------------------
 
 export class InboundHandler {
-  /** Seen message IDs for replay detection (bounded LRU) */
-  private readonly seenMessageIds: Set<string> = new Set();
-  private readonly maxSeenIds: number;
+  private readonly messageIdLog: MessageIdLog;
 
   constructor(
     private readonly transport: DidcommTransport,
@@ -48,9 +47,10 @@ export class InboundHandler {
     private readonly classifier: MessageClassifier,
     private readonly mapper: PolicyMapper,
     private readonly localRouter?: (msg: DidcommMessage, classified: ClassifiedMessage) => Promise<void>,
-    options?: { maxSeenMessageIds?: number },
+    messageIdLog?: MessageIdLog,
   ) {
-    this.maxSeenIds = options?.maxSeenMessageIds ?? 10_000;
+    // Fall back to a volatile in-memory log if none provided (dev/testing only)
+    this.messageIdLog = messageIdLog ?? new InMemoryIdLog();
   }
 
   async handle(raw: Uint8Array | string): Promise<InboundResult> {
@@ -85,12 +85,12 @@ export class InboundHandler {
       if (scopeResult) return scopeResult;
     }
 
-    // Step 8: Replay check
-    if (this.seenMessageIds.has(msg.id)) {
+    // Step 8: Replay check (persisted across restarts)
+    if (await this.messageIdLog.hasSeen(msg.id)) {
       await this.logDeny(senderDid, msg.type, peer.mappedAgentId, "REPLAY_DETECTED");
       return { delivered: false, reason: "REPLAY_DETECTED", event: "DIDCOMM_RECEIVE_DENY" };
     }
-    this.recordMessageId(msg.id);
+    await this.messageIdLog.record(msg.id);
 
     // Step 9: Classify
     const classified = this.classifier.classifyInbound(msg);
@@ -195,13 +195,12 @@ export class InboundHandler {
   private async logDeny(peerDid: string, messageType: string | undefined, agentId: string | undefined, reason: string): Promise<void> {
     await this.atlas.logEvent(buildReceiveDeny({ peerDid, messageType, agentId, reason }));
   }
+}
 
-  private recordMessageId(id: string): void {
-    this.seenMessageIds.add(id);
-    // Bounded: evict oldest when full (simple approach — not a true LRU, but sufficient)
-    if (this.seenMessageIds.size > this.maxSeenIds) {
-      const first = this.seenMessageIds.values().next().value;
-      if (first !== undefined) this.seenMessageIds.delete(first);
-    }
-  }
+/** Volatile fallback for dev/testing when no persistent log is provided */
+class InMemoryIdLog implements MessageIdLog {
+  private readonly ids = new Set<string>();
+  async hasSeen(id: string) { return this.ids.has(id); }
+  async record(id: string) { this.ids.add(id); }
+  async size() { return this.ids.size; }
 }

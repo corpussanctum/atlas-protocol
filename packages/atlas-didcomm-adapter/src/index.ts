@@ -23,6 +23,7 @@ export type {
   MessagingCapability,
   DidcommDirection,
   DelegationScope,
+  MessageIdLog,
 } from "./types.js";
 
 // Core classes
@@ -32,7 +33,7 @@ export { PolicyMapper } from "./policy-mapper.js";
 export type { PolicyMapperOptions, MapContext } from "./policy-mapper.js";
 export { DefaultClassifier } from "./classifier.js";
 export type { ClassifierOptions } from "./classifier.js";
-export { FilePeerStore, MockPeerStore } from "./peer-store.js";
+export { FilePeerStore, MockPeerStore, FileMessageIdLog, MockMessageIdLog } from "./peer-store.js";
 export { InboundHandler } from "./inbound.js";
 export { OutboundHandler } from "./outbound.js";
 
@@ -71,7 +72,7 @@ import { PolicyMapper } from "./policy-mapper.js";
 import type { PolicyMapperOptions } from "./policy-mapper.js";
 import { DefaultClassifier } from "./classifier.js";
 import type { ClassifierOptions } from "./classifier.js";
-import { FilePeerStore } from "./peer-store.js";
+import { FilePeerStore, FileMessageIdLog } from "./peer-store.js";
 import { InboundHandler } from "./inbound.js";
 import { OutboundHandler } from "./outbound.js";
 import type { ClassifiedMessage } from "./types.js";
@@ -87,6 +88,8 @@ export interface AtlasDidcommAdapterOptions {
   invitationTtlSeconds?: number;
   mapperOptions?: PolicyMapperOptions;
   classifierOptions?: ClassifierOptions;
+  /** Persistent message ID log for replay protection. If omitted and dataDir is set, FileMessageIdLog is used. */
+  messageIdLog?: import("./types.js").MessageIdLog;
 }
 
 export class AtlasDidcommAdapter {
@@ -102,6 +105,10 @@ export class AtlasDidcommAdapter {
     const classifier = options.classifier ?? new DefaultClassifier(options.classifierOptions);
     const mapper = options.policyMapper ?? new PolicyMapper(options.mapperOptions);
 
+    // Persistent replay protection — FileMessageIdLog if dataDir given, else volatile fallback
+    const idLog = options.messageIdLog
+      ?? (options.dataDir ? new FileMessageIdLog(options.dataDir) : undefined);
+
     this.pairing = new PairingManager(
       options.transport,
       this.store,
@@ -116,6 +123,7 @@ export class AtlasDidcommAdapter {
       classifier,
       mapper,
       options.localRouter,
+      idLog,
     );
 
     this.outbound = new OutboundHandler(
@@ -124,6 +132,7 @@ export class AtlasDidcommAdapter {
       options.atlas,
       classifier,
       mapper,
+      idLog,
     );
   }
 
