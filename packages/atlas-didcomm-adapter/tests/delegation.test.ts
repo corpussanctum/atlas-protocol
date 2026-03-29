@@ -210,7 +210,10 @@ describe("Delegation — OutboundHandler scope enforcement", () => {
   });
 
   it("allows send when scope has empty allowedMessageTypes (all types)", async () => {
-    const anyType = makeScope({ allowedMessageTypes: [] });
+    const anyType = makeScope({
+      allowedMessageTypes: [],
+      grantedCapabilities: ["message:send", "message:receive", "message:send:health", "message:receive:health"],
+    });
     await store.put(makePeer({ delegationScope: anyType }));
     const result = await outbound.send(
       "did:peer:clinic-123",
@@ -291,6 +294,63 @@ describe("Delegation — InboundHandler scope enforcement", () => {
     const result = await inbound.handle(rawMsg("clinic/appointment.summary.response", "did:peer:clinic-123"));
     assert.equal(result.delivered, false);
     assert.equal(result.reason, "DELEGATION_REVOKED");
+  });
+
+  it("denies receive when capability is not in delegation scope", async () => {
+    // Scope only grants health capabilities, but we send a financial message type
+    // that's in allowedMessageTypes but requires message:receive:financial
+    const scope = makeScope({
+      allowedMessageTypes: [], // allow all types
+      grantedCapabilities: ["message:send:health", "message:receive:health"], // only health
+    });
+    await store.put(makePeer({ peerDid: "did:peer:clinic-123", delegationScope: scope }));
+    const result = await inbound.handle(rawMsg("bank/statement.response", "did:peer:clinic-123"));
+    assert.equal(result.delivered, false);
+    assert.equal(result.reason, "DELEGATION_CAPABILITY_DENIED");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Replay protection
+// ---------------------------------------------------------------------------
+
+describe("Delegation — Replay protection", () => {
+  let atlas: MockAtlasBridge;
+  let store: MockPeerStore;
+  let transport: MockTransport;
+
+  beforeEach(() => {
+    atlas = new MockAtlasBridge();
+    store = new MockPeerStore();
+    transport = new MockTransport();
+  });
+
+  it("inbound rejects duplicate message ID", async () => {
+    const inbound = new InboundHandler(transport, store, atlas, new DefaultClassifier(), new PolicyMapper());
+    await store.put(makePeer({ peerDid: "did:peer:sender" }));
+    const msg = makeMsg("clinic/appointment.summary.response", "did:peer:sender");
+    const raw = JSON.stringify(msg);
+
+    const r1 = await inbound.handle(raw);
+    assert.equal(r1.delivered, true);
+
+    const r2 = await inbound.handle(raw);
+    assert.equal(r2.delivered, false);
+    assert.equal(r2.reason, "REPLAY_DETECTED");
+  });
+
+  it("outbound rejects duplicate message ID", async () => {
+    const outbound = new OutboundHandler(transport, store, atlas, new DefaultClassifier(), new PolicyMapper());
+    await store.put(makePeer({ peerDid: "did:peer:target" }));
+    const msg = makeMsg("clinic/appointment.summary.request");
+
+    const r1 = await outbound.send("did:peer:target", msg);
+    assert.equal(r1.sent, true);
+
+    const r2 = await outbound.send("did:peer:target", msg);
+    assert.equal(r2.sent, false);
+    assert.equal(r2.reason, "REPLAY_DETECTED");
+    assert.equal(transport.messagesSent.length, 1, "Wire should only see the first message");
   });
 });
 

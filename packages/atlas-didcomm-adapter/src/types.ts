@@ -235,7 +235,12 @@ export interface AtlasBridge {
   logEvent(event: AtlasDidcommAuditEvent): Promise<void>;
   registerPeerBinding(binding: PeerBinding): Promise<void>;
   revokePeerBinding(peerDid: string, reason: string): Promise<void>;
-  /** Check if a delegated credential is still valid (not expired/revoked). Optional — adapter degrades gracefully. */
+  /**
+   * Check if a delegated credential is still valid (not expired/revoked).
+   * MUST be implemented for delegation-aware messaging. When a delegation
+   * scope is present on a peer, this is called on every message — not optional.
+   * If not implemented, delegation-scoped messages are denied (fail-closed).
+   */
   isDelegationValid?(agentId: string): Promise<boolean>;
 }
 

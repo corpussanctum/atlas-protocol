@@ -57,7 +57,7 @@ describe("InboundHandler", () => {
     const msg = makeMsg("clinic/appointment.summary.request", "did:peer:unknown-sender");
     const result = await handler.handle(packMsg(msg));
     assert.equal(result.delivered, false);
-    assert.equal(result.reason, "PEER_NOT_TRUSTED");
+    assert.equal(result.reason, "PEER_NOT_FOUND");
   });
 
   it("denies message from revoked peer", async () => {
