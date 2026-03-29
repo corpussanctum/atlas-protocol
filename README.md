@@ -134,7 +134,7 @@ Once the first credential is registered, identity enforcement activates. Set `AT
 
 ## Policy engine
 
-The default ruleset contains **96 ordered rules** (89 deny + 7 ask) evaluated on every request. First match wins.
+The default ruleset contains **96 ordered rules** (89 deny + 7 ask) evaluated on every request. First match wins. If no rule matches, Atlas defaults to **ASK**, not ALLOW — the request is forwarded to the operator for a human decision.
 
 ### Hard deny (89 rules, no human override)
 

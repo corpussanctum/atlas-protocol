@@ -92,11 +92,11 @@ did:atlas:<uuid>
 
 Where `<uuid>` is a RFC 4122 v4 UUID. Example: `did:atlas:550e8400-e29b-41d4-a716-446655440000`.
 
-> **Note:** The current `did:atlas` method is locally-scoped to a single gatekeeper operator. A future version will define namespace syntax and cross-operator resolution semantics to support federated deployments.
+> **Scope constraint:** `did:atlas` in this version (v0.8.x / v1.0.0) is a **local, single-operator DID method**. It does not define federated namespace resolution, inter-operator trust exchange, or a public resolution network. Cross-operator use cases will require a future DID method version with new syntax and resolution semantics. Implementations MUST NOT advertise `did:atlas` identifiers as globally resolvable.
 
 ### 4.2 DID document
 
-A `did:atlas` identifier resolves to an `AgentCredential` object within the local identity registry. There is no external resolution endpoint — `did:atlas` is a locally-scoped method designed for single-operator environments.
+A `did:atlas` identifier resolves to an `AgentCredential` object within the **local** identity registry of the issuing gatekeeper. There is no external resolution endpoint. `did:atlas` is a locally-scoped method designed for single-operator environments — it assumes a single gatekeeper is the sole issuer, verifier, and registry operator.
 
 **Canonical DID Document structure:**
 
@@ -202,6 +202,13 @@ This prevents substitution attacks where an attacker replays a chain signature w
 
 Revoking a parent credential MUST revoke all descendants. Implementations MUST walk the delegation tree depth-first and revoke every child.
 
+**Atomicity requirement:** Cascade revocation MUST be atomic. Either all descendants are revoked or none are. Partial cascade states (parent revoked, some descendants still active) are invalid.
+
+- If a failure occurs mid-cascade (I/O error, crash), the implementation MUST either roll back all revocations performed so far, or mark the cascade as failed and retry on next startup.
+- A verifier MUST NOT observe a revoked parent with any active (non-revoked) descendants unless the system is in an explicit failed/uncommitted cascade state.
+- The audit trail MUST record a `CASCADE_REVOCATION` event containing the full set of revoked agent IDs. If the cascade fails, a `CASCADE_REVOCATION_FAILED` event MUST be recorded with the partial set and the failure reason.
+- On recovery from a failed cascade, implementations MUST re-attempt revocation of any descendants that remain active.
+
 ### 5.4 Verification
 
 Verifying a delegated credential MUST:
@@ -228,26 +235,44 @@ Implementations MUST provide at minimum:
 Implementations SHOULD provide:
 
 3. **Post-quantum signatures** — ML-DSA-65 (FIPS 204) signature per entry in `pq_signature`.
-4. **Periodic checkpoints** — `CHECKPOINT` entries at configurable intervals containing `checkpoint_seq`, `checkpoint_hash`, and `entries_since_start`.
 
 Implementations MAY provide:
 
-5. **HMAC-SHA256 signatures** — classical `hmac` field for backwards compatibility.
-6. **External anchoring** — publishing checkpoint hashes to a transparency log or blockchain.
+4. **HMAC-SHA256 signatures** — classical `hmac` field for backwards compatibility.
+5. **External anchoring** — publishing checkpoint hashes to a transparency log or blockchain.
 
-### 6.3 Anti-truncation
+### 6.3 Periodic checkpoints
+
+Checkpoints are `CHECKPOINT` audit entries emitted at configurable intervals. Each checkpoint MUST contain:
+
+| Field | Description |
+|---|---|
+| `checkpoint_seq` | Sequence number of this checkpoint entry |
+| `checkpoint_hash` | SHA3-256 hash of the entry at `checkpoint_seq - 1` |
+| `entries_since_start` | Total entries since the audit log began (or since last rotation) |
+| `pq_signature` | ML-DSA-65 signature of the checkpoint (if signer available) |
+
+**Conformance requirements:**
+
+- **Development:** Checkpoints MAY be disabled.
+- **Production:** Checkpoints MUST be enabled. The default interval SHOULD be every 100 entries or 10 minutes, whichever comes first.
+- **Research:** Checkpoints MUST be enabled.
+
+When checkpoints are enabled, the verifier MUST detect gaps between expected and actual checkpoint sequences.
+
+### 6.4 Anti-truncation
 
 Hash chaining detects tampering within the chain but not silent truncation (removing entries from the end). Implementations MUST defend against truncation via:
 
 - Monotonic sequence numbers (gap detection).
-- Periodic signed checkpoint entries.
+- Periodic signed checkpoints (when enabled per conformance profile).
 
 Implementations SHOULD additionally consider:
 
 - External checkpoint anchoring (e.g., publishing checkpoint hashes to an append-only third-party log).
 - Signed rotation manifests that record the final sequence number and hash of each archived file.
 
-### 6.4 Rotation
+### 6.5 Rotation
 
 When the audit log exceeds a configurable size threshold, implementations SHOULD rotate the file to an archive directory. The rotation manifest MUST record:
 
@@ -259,7 +284,7 @@ When the audit log exceeds a configurable size threshold, implementations SHOULD
 
 The chain anchor from the rotated file becomes the effective `prev_hash` for the new file's first entry.
 
-### 6.5 Entry schema
+### 6.6 Entry schema
 
 Every audit entry MUST include: `id`, `timestamp`, `event`, `seq`, `prev_hash`.
 
@@ -267,9 +292,24 @@ Every audit entry SHOULD include: `hash_algorithm`, `pq_signature`.
 
 Event-specific fields (`permission`, `policy_result`, `verdict`, `agentId`, `identityVerified`, `mitre`, etc.) are included when applicable.
 
-### 6.6 Field redaction
+### 6.7 Field redaction
 
-When privacy mode is enabled or consent tiers require it, sensitive fields on the permission object MUST be replaced with `HASHED:<sha256>` rather than stored in plaintext. The hash allows verification without exposing the original value.
+When privacy mode is enabled or consent tiers require it, sensitive fields on the permission object MUST be replaced with a keyed hash rather than stored in plaintext.
+
+**Redaction construction:**
+
+```
+REDACTED:<hmac-sha256(redaction_key, field_value)>
+```
+
+- The redaction key MUST be derived from the gatekeeper's HMAC secret (`ATLAS_HMAC_SECRET`). If no HMAC secret is configured, implementations MUST use a randomly generated 256-bit redaction key stored alongside the audit log (at `<data_dir>/redaction-key`, mode 0600).
+- The redaction key MUST NOT be the same value as the audit HMAC signing key. If derived from the same secret, a domain separator (e.g., `"atlas-redaction-v1"`) MUST be used.
+- The redaction key SHOULD be rotated on the same schedule as the audit HMAC key.
+- Cross-entry deterministic comparison IS intended — the same field value in different entries produces the same redacted hash, enabling frequency analysis and join operations without exposing plaintext.
+
+**Why HMAC, not bare SHA-256:** Bare SHA-256 is vulnerable to brute-force reversal on low-entropy values (e.g., SSNs have ~10^9 possibilities, trivially enumerable). HMAC-SHA256 with a secret key makes reversal computationally infeasible regardless of input entropy.
+
+Implementations MUST NOT use bare SHA-256 for redaction of fields that may contain low-entropy sensitive values (SSN, phone, DOB, MRN, short paths).
 
 ## 7. Why Layer (Council of Experts)
 
@@ -457,7 +497,7 @@ Examples: Slack, Discord, email, SMS, local console, custom webhook.
 | Hash chaining | SHA3-256 | FIPS 202 | Quantum-resistant hash |
 | Credential hash | SHA3-256 | FIPS 202 | Canonical payload digest |
 | Audit HMAC (optional) | HMAC-SHA256 | RFC 2104 | Classical, backwards-compatible |
-| Field redaction | SHA-256 | FIPS 180-4 | One-way hash for privacy |
+| Field redaction | HMAC-SHA256 | RFC 2104 | Keyed hash for privacy (resists brute-force on low-entropy values) |
 | System prompt hash | SHA-256 | FIPS 180-4 | Provenance tracking |
 
 ## Appendix B: Reference implementation mapping
@@ -488,3 +528,103 @@ The reference policy ruleset covers techniques from these ATT&CK tactics:
 - Command and Control (T1071.001, T1095, T1572, T1573.002)
 - Exfiltration (T1048, T1567)
 - Impact (T1485, T1489, T1496, T1561)
+
+## Appendix D: Canonical serialization rules
+
+This appendix defines the canonical serialization used for all hashing and signing operations in the protocol. Two independent implementations that follow these rules MUST produce identical byte strings for the same logical object.
+
+### D.1 Encoding
+
+All canonical payloads MUST be encoded as UTF-8. No BOM. No other encodings are permitted.
+
+### D.2 JSON serialization
+
+Canonical JSON MUST follow these rules:
+
+| Rule | Requirement |
+|---|---|
+| **Key ordering** | Object keys MUST be sorted lexicographically by their UTF-8 byte representation (equivalent to `Array.prototype.sort()` in JavaScript). This applies recursively to all nested objects. |
+| **Array ordering** | Arrays MUST preserve their logical order, except where the spec explicitly requires sorting (e.g., `capabilities` arrays MUST be sorted lexicographically before serialization). |
+| **Whitespace** | No insignificant whitespace. No spaces after `:` or `,`. No newlines. No indentation. Equivalent to `JSON.stringify(obj)` with no replacer or space arguments, applied to a key-sorted object. |
+| **Strings** | MUST use the minimal JSON escape sequences. Characters above U+001F that do not require escaping MUST NOT be escaped. Unicode escapes MUST use lowercase hex (`\u00e9`, not `\U00E9` or `\u00E9`). |
+| **Numbers** | MUST use the shortest decimal representation without trailing zeros. No leading zeros. No positive sign. Integers MUST NOT include a decimal point (`42`, not `42.0`). |
+| **Booleans** | `true` or `false` (lowercase, no quotes). |
+| **Null** | `null` (lowercase). Fields with value `null` MUST be omitted from the canonical payload entirely, unless the field is explicitly listed as required-when-null in the relevant schema. |
+| **Undefined/missing** | Fields that are `undefined` or absent MUST be omitted. |
+
+### D.3 Timestamp normalization
+
+All timestamps in canonical payloads MUST be ISO 8601 format with millisecond precision and UTC timezone designator:
+
+```
+YYYY-MM-DDTHH:mm:ss.sssZ
+```
+
+Example: `2026-03-29T14:30:00.000Z`
+
+Implementations MUST normalize timestamps to this format before hashing or signing. Timestamps without milliseconds MUST have `.000` appended. Timestamps with non-UTC offsets MUST be converted to UTC.
+
+### D.4 Unknown field handling
+
+When computing a canonical payload for hashing or signing, fields not defined in the relevant schema MUST be excluded. This prevents implementation-specific extensions from breaking cross-implementation signature verification.
+
+### D.5 Derived field exclusion
+
+The following fields are derived (computed from the canonical payload itself) and MUST be excluded before hashing or signing:
+
+| Context | Excluded fields |
+|---|---|
+| **Credential payloads** | `issuerSignature`, `credentialHash` |
+| **Delegation authority payloads** | (none — the entire object is the signed payload) |
+| **Audit entries** (hash chain) | `hmac`, `pq_signature` (the entry is hashed/signed without these fields; they are appended after) |
+| **Checkpoint entries** | `pq_signature` |
+| **Rotation manifests** | `manifestSignature` |
+
+### D.6 Application to specific payloads
+
+**Credential canonical payload:**
+1. Start with the full `AgentCredential` object.
+2. Remove `issuerSignature` and `credentialHash`.
+3. Sort all object keys lexicographically (recursive).
+4. Sort `capabilities` array lexicographically.
+5. Normalize all timestamps per D.3.
+6. Serialize per D.2.
+7. The `credentialHash` is SHA3-256 of the resulting byte string.
+8. The `issuerSignature` is ML-DSA-65 sign of the resulting byte string.
+
+**Delegation authority payload:**
+1. Construct the delegation authority object per §5.2.
+2. Sort all keys lexicographically.
+3. Sort `capabilities` array lexicographically.
+4. Normalize all timestamps per D.3.
+5. Serialize per D.2.
+6. The chain signature is ML-DSA-65 sign (parent key) of the resulting byte string.
+
+**Audit entry (for hash chain):**
+1. Start with the full `AuditEntry` object.
+2. Remove `hmac` and `pq_signature`.
+3. Sort all keys lexicographically (recursive, including nested objects like `permission`, `policy_result`, `meta`, `mitre`).
+4. Normalize all timestamps per D.3.
+5. Serialize per D.2.
+6. `hmac` = HMAC-SHA256 of the resulting byte string (if configured).
+7. `pq_signature` = ML-DSA-65 sign of the resulting byte string (if signer available).
+8. The `prev_hash` for the NEXT entry = SHA3-256 of the full serialized line (including `hmac` and `pq_signature`).
+
+**Checkpoint entry:** Same as audit entry.
+
+**Rotation manifest:**
+1. Start with the full manifest object.
+2. Remove `manifestSignature`.
+3. Sort all keys lexicographically.
+4. Serialize per D.2.
+5. `manifestSignature` = ML-DSA-65 sign of the resulting byte string.
+
+### D.7 Test vectors
+
+Conformant implementations SHOULD include test vectors that verify canonical serialization produces identical byte strings for known inputs. At minimum:
+
+1. A credential payload with known field values → expected SHA3-256 hash.
+2. A delegation authority payload → expected SHA3-256 hash.
+3. An audit entry → expected `prev_hash` value for the next entry.
+
+> **Note:** The reference implementation's test suite includes these vectors. Third-party implementations SHOULD validate against them before claiming conformance.
