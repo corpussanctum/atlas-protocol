@@ -19,6 +19,7 @@ import {
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { randomBytes } from "node:crypto";
 import { loadConfig } from "./config.js";
 import { PolicyEngine } from "./policy-engine.js";
 import type { PermissionRequest, PolicyResult } from "./policy-engine.js";
@@ -39,8 +40,12 @@ import type { WhyTrigger } from "./why-triggers.js";
 import { BaselineStore } from "./baseline-store.js";
 import { ingestEntry as baselineIngestEntry, ingestAssessment as baselineIngestAssessment, detectDrift, getBaselineContext } from "./baseline-engine.js";
 import type { DriftAssessment } from "./baseline-types.js";
+import { runPolicyTests } from "./policy-test-runner.js";
+import { BreakGlassManager } from "./break-glass.js";
+import { AuditRotationManager } from "./audit-rotation.js";
+import { checkQuietEligibility, loadQuietConfig } from "./quiet-mode.js";
 
-const VERSION = "0.5.0";
+const VERSION = "0.8.0";
 
 const VALID_ROLES: AgentRole[] = ["claude-code", "orchestrator", "tool-caller", "observer", "admin"];
 const VALID_CAPABILITIES: AgentCapability[] = [
@@ -79,6 +84,20 @@ async function main(): Promise<void> {
 
   // Baseline store
   const baselineStore = new BaselineStore(config.data_dir);
+
+  // Break-glass manager
+  const breakGlass = new BreakGlassManager(config.data_dir);
+
+  // Quiet mode
+  const quietConfig = loadQuietConfig();
+
+  // Audit log rotation
+  const rotationMaxBytes = parseInt(process.env.ATLAS_AUDIT_MAX_SIZE_MB ?? "10", 10) * 1024 * 1024;
+  const rotationMaxArchives = parseInt(process.env.ATLAS_AUDIT_MAX_ARCHIVES ?? "0", 10);
+  const auditRotation = new AuditRotationManager(config.audit_log_path, {
+    max_size_bytes: rotationMaxBytes,
+    max_archives: rotationMaxArchives,
+  });
 
   // Why Layer state
   const whyConfig = loadWhyConfig();
@@ -328,6 +347,61 @@ async function main(): Promise<void> {
           },
         },
       },
+      // -- Policy testing tool (v0.8.0) -----------------------------------------
+      {
+        name: "atlas_test_policy",
+        description:
+          "Run policy regression tests against known malicious/benign fixtures. " +
+          "Returns pass/fail counts and details of any failures. Use after rule changes to verify no regressions.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            verbose: { type: "boolean", description: "Include all results, not just failures (default: false)" },
+          },
+        },
+      },
+      // -- Break-glass tools (v0.8.0) ------------------------------------------
+      {
+        name: "atlas_break_glass_activate",
+        description:
+          "Activate a break-glass emergency override. Bypasses Telegram for 'ask' verdicts (hard-deny rules are NEVER bypassed). " +
+          "Requires operator confirmation via Telegram. Use only when Telegram is expected to become unreachable.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            reason: { type: "string", description: "Why break-glass is needed" },
+            ttl_minutes: { type: "number", description: "Token lifetime in minutes (default: 60, max: 240)" },
+            max_requests: { type: "number", description: "Max auto-approved requests (0 = unlimited, default: 0)" },
+          },
+          required: ["reason"],
+        },
+      },
+      {
+        name: "atlas_break_glass_status",
+        description: "Check current break-glass status.",
+        inputSchema: { type: "object" as const, properties: {} },
+      },
+      {
+        name: "atlas_break_glass_revoke",
+        description: "Revoke an active break-glass token immediately.",
+        inputSchema: { type: "object" as const, properties: {} },
+      },
+      // -- Audit rotation tools (v0.8.0) --------------------------------------
+      {
+        name: "atlas_audit_rotate",
+        description: "Manually trigger audit log rotation. Archives the current log and starts a new one.",
+        inputSchema: { type: "object" as const, properties: {} },
+      },
+      {
+        name: "atlas_audit_archives",
+        description: "List archived audit log files with metadata, or verify archive integrity.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            verify: { type: "boolean", description: "Verify integrity of all archives (default: false)" },
+          },
+        },
+      },
       // -- Why Layer tool (v0.6.0) --------------------------------------------
       {
         name: "atlas_why_assess",
@@ -416,6 +490,12 @@ async function main(): Promise<void> {
               : {}),
           },
           data_dir: config.data_dir,
+          quiet_mode: {
+            enabled: quietConfig.enabled,
+            min_maturity: quietConfig.min_maturity,
+            quiet_tools: Array.from(quietConfig.quiet_tools),
+          },
+          break_glass: breakGlass.getStatus(),
           identity: {
             loaded: identityContext.loaded,
             principal: identityContext.principal_label || null,
@@ -450,7 +530,8 @@ async function main(): Promise<void> {
         }
 
         // Auth check: bootstrap (empty registry) or caller has identity:register
-        if (!registry.isEmpty()) {
+        const isBootstrap = registry.isEmpty();
+        if (!isBootstrap) {
           if (!sessionAgentId) {
             return { content: [{ type: "text" as const, text: "Error: no active session agent. Register fails — bootstrap already complete." }], isError: true };
           }
@@ -458,6 +539,91 @@ async function main(): Promise<void> {
           if (!callerCred || !callerCred.capabilities.includes("identity:register")) {
             return { content: [{ type: "text" as const, text: "Error: active agent lacks identity:register capability" }], isError: true };
           }
+        }
+
+        // Bootstrap confirmation: two-channel verification via console + Telegram
+        // Generates a code printed to server console, operator confirms via Telegram
+        // Skip if ATLAS_BOOTSTRAP_SKIP_CONFIRM=true (dev/testing only — logged as warning)
+        const skipBootstrapConfirm = process.env.ATLAS_BOOTSTRAP_SKIP_CONFIRM === "true";
+        if (isBootstrap && config.telegram_bot_token && !skipBootstrapConfirm) {
+          const confirmCode = randomBytes(3).toString("hex").toUpperCase(); // 6 hex chars
+          const confirmTimeoutMs = 120_000; // 2 minutes
+
+          // Print code to server console (requires physical/SSH access to see)
+          console.log("");
+          console.log("╔══════════════════════════════════════════════════════════════╗");
+          console.log("║  ATLAS BOOTSTRAP CONFIRMATION                               ║");
+          console.log("║                                                              ║");
+          console.log(`║  Code: ${confirmCode}                                            ║`);
+          console.log("║                                                              ║");
+          console.log("║  Send this code via Telegram to confirm first registration.  ║");
+          console.log("║  Timeout: 120 seconds                                        ║");
+          console.log("╚══════════════════════════════════════════════════════════════╝");
+          console.log("");
+
+          // Send challenge to Telegram
+          const challengeMsg =
+            `🔐 <b>BOOTSTRAP CONFIRMATION REQUIRED</b>\n\n` +
+            `A first-time agent registration was requested:\n` +
+            `<b>Name:</b> <code>${escapeHtml(regName)}</code>\n` +
+            `<b>Role:</b> <code>${escapeHtml(role)}</code>\n` +
+            `<b>Capabilities:</b> ${capabilities.length}\n\n` +
+            `To confirm, reply with the 6-character code shown on the server console.\n` +
+            `⏱ Auto-deny in 120 seconds.`;
+
+          try {
+            await telegram.sendReply(challengeMsg, { broadcast: true });
+          } catch {
+            // Telegram send failed — fall through to deny
+            return { content: [{ type: "text" as const, text: "Error: could not send bootstrap confirmation to Telegram. Ensure Telegram is configured." }], isError: true };
+          }
+
+          // Wait for the operator to send the confirmation code
+          const confirmed = await new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => {
+              cleanup();
+              resolve(false);
+            }, confirmTimeoutMs);
+
+            const handler = (msg: import("./telegram.js").IncomingMessage) => {
+              if (msg.text.trim().toUpperCase() === confirmCode) {
+                cleanup();
+                resolve(true);
+              }
+            };
+
+            function cleanup() {
+              clearTimeout(timer);
+              // Remove the handler — we only need it once
+              const idx = (telegram as any).messageHandlers?.indexOf(handler) ?? -1;
+              if (idx >= 0) (telegram as any).messageHandlers.splice(idx, 1);
+            }
+
+            telegram.onMessage(handler);
+          });
+
+          if (!confirmed) {
+            audit.log("POLICY_DENY", {
+              meta: {
+                event_detail: "BOOTSTRAP_CONFIRMATION_TIMEOUT",
+                agent_name: regName,
+                agent_role: role,
+              },
+            });
+            await telegram.sendReply("❌ Bootstrap confirmation timed out or code not matched. Registration denied.", { broadcast: true }).catch(() => {});
+            return { content: [{ type: "text" as const, text: "Error: bootstrap confirmation timed out. The 6-character code was not confirmed via Telegram within 120 seconds." }], isError: true };
+          }
+
+          // Confirmation succeeded
+          await telegram.sendReply("✅ Bootstrap confirmation verified. Registering first agent credential...", { broadcast: true }).catch(() => {});
+          console.log("[atlas] Bootstrap confirmation verified via Telegram.");
+        }
+
+        if (isBootstrap && skipBootstrapConfirm) {
+          console.warn("[atlas] WARNING: Bootstrap confirmation skipped (ATLAS_BOOTSTRAP_SKIP_CONFIRM=true)");
+          audit.log("CONFIG_LOADED", {
+            meta: { event_detail: "BOOTSTRAP_CONFIRM_SKIPPED", warning: "Two-channel verification bypassed by env var" },
+          });
         }
 
         try {
@@ -472,6 +638,7 @@ async function main(): Promise<void> {
               agent_role: credential.role,
               capabilities: credential.capabilities,
               expires_at: credential.expiresAt,
+              bootstrap_confirmed: isBootstrap,
             },
           });
 
@@ -708,6 +875,219 @@ async function main(): Promise<void> {
         return { content: [{ type: "text" as const, text: JSON.stringify(summaries, null, 2) }] };
       }
 
+      case "atlas_test_policy": {
+        const verbose = Boolean(args?.verbose);
+        const report = runPolicyTests(config);
+
+        const lines: string[] = [];
+        if (report.failed === 0) {
+          lines.push(`✅ All ${report.totalFixtures} policy fixtures passed (${report.totalRules} rules)`);
+        } else {
+          lines.push(`❌ ${report.failed}/${report.totalFixtures} fixtures FAILED (${report.totalRules} rules)`);
+          lines.push("");
+          for (const f of report.failures) {
+            lines.push(`  FAIL: [${f.tool}] "${f.input}" — expected ${f.expected}, got ${f.actual}` +
+              (f.matchedRule ? ` (rule: ${f.matchedRule})` : " (no rule matched)"));
+          }
+        }
+        lines.push("");
+        lines.push(`Malicious: ${report.summary.malicious.passed}/${report.summary.malicious.total}`);
+        lines.push(`Benign:    ${report.summary.benign.passed}/${report.summary.benign.total}`);
+        lines.push(`Ask:       ${report.summary.ask.passed}/${report.summary.ask.total}`);
+        lines.push(`Edge:      ${report.summary.edge.passed}/${report.summary.edge.total}`);
+        lines.push(`Pass rate: ${report.passRate}`);
+
+        if (verbose) {
+          return { content: [{ type: "text" as const, text: JSON.stringify(report, null, 2) }] };
+        }
+
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+      }
+
+      case "atlas_break_glass_activate": {
+        const bgReason = args?.reason as string;
+        const bgTtl = typeof args?.ttl_minutes === "number" ? args.ttl_minutes : 60;
+        const bgMaxReq = typeof args?.max_requests === "number" ? args.max_requests : 0;
+
+        if (!bgReason) {
+          return { content: [{ type: "text" as const, text: "Error: reason is required" }], isError: true };
+        }
+
+        // Require Telegram confirmation before activating (if Telegram is available)
+        if (config.telegram_bot_token) {
+          const bgConfirmCode = randomBytes(3).toString("hex").toUpperCase();
+
+          console.log("");
+          console.log(`[atlas] BREAK-GLASS ACTIVATION CODE: ${bgConfirmCode}`);
+          console.log(`[atlas] Send this code via Telegram to confirm (120s timeout).`);
+          console.log("");
+
+          try {
+            await telegram.sendReply(
+              `⚠️ <b>BREAK-GLASS ACTIVATION REQUEST</b>\n\n` +
+              `Reason: ${escapeHtml(bgReason)}\n` +
+              `TTL: ${bgTtl} minutes\n` +
+              `Max requests: ${bgMaxReq || "unlimited"}\n\n` +
+              `Reply with the 6-character code from the server console to confirm.`,
+              { broadcast: true }
+            );
+
+            const bgConfirmed = await new Promise<boolean>((resolve) => {
+              const timer = setTimeout(() => { bgCleanup(); resolve(false); }, 120_000);
+              const handler = (msg: import("./telegram.js").IncomingMessage) => {
+                if (msg.text.trim().toUpperCase() === bgConfirmCode) {
+                  bgCleanup(); resolve(true);
+                }
+              };
+              function bgCleanup() {
+                clearTimeout(timer);
+                const idx = (telegram as any).messageHandlers?.indexOf(handler) ?? -1;
+                if (idx >= 0) (telegram as any).messageHandlers.splice(idx, 1);
+              }
+              telegram.onMessage(handler);
+            });
+
+            if (!bgConfirmed) {
+              return { content: [{ type: "text" as const, text: "Error: break-glass activation not confirmed. Code not matched within 120 seconds." }], isError: true };
+            }
+          } catch {
+            // Telegram send failed — this is the exact scenario break-glass is for.
+            // Allow activation without Telegram confirmation if Telegram is down.
+            console.warn("[atlas] Telegram unreachable — activating break-glass without Telegram confirmation.");
+          }
+        }
+
+        const { token, secret } = breakGlass.create(bgReason, bgTtl, bgMaxReq);
+
+        console.log("");
+        console.log("╔══════════════════════════════════════════════════════╗");
+        console.log("║  BREAK-GLASS TOKEN ACTIVATED                        ║");
+        console.log(`║  Expires: ${token.expires_at}        ║`);
+        console.log(`║  Reason: ${bgReason.slice(0, 44).padEnd(44)}║`);
+        console.log("╚══════════════════════════════════════════════════════╝");
+        console.log("");
+
+        audit.log("CONFIG_LOADED", {
+          meta: {
+            event_detail: "BREAK_GLASS_ACTIVATED",
+            reason: bgReason,
+            expires_at: token.expires_at,
+            ttl_minutes: bgTtl,
+            max_requests: bgMaxReq,
+            token_hash: token.token_hash.slice(0, 16) + "...",
+          },
+        });
+
+        await telegram.sendReply(
+          `🔓 <b>BREAK-GLASS ACTIVATED</b>\n` +
+          `Reason: ${escapeHtml(bgReason)}\n` +
+          `Expires: ${escapeHtml(token.expires_at)}\n` +
+          `Ask verdicts will be auto-approved. Hard-deny rules remain enforced.`,
+          { broadcast: true }
+        ).catch(() => {});
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              activated: true,
+              expires_at: token.expires_at,
+              reason: bgReason,
+              ttl_minutes: bgTtl,
+              max_requests: bgMaxReq,
+              note: "Hard-deny rules are NEVER bypassed. Only 'ask' verdicts are auto-approved.",
+            }, null, 2),
+          }],
+        };
+      }
+
+      case "atlas_break_glass_status": {
+        const bgStatus = breakGlass.getStatus();
+        return { content: [{ type: "text" as const, text: JSON.stringify(bgStatus, null, 2) }] };
+      }
+
+      case "atlas_break_glass_revoke": {
+        const wasActive = breakGlass.isActive();
+        const revoked = breakGlass.revoke();
+
+        if (revoked && wasActive) {
+          audit.log("CONFIG_LOADED", {
+            meta: { event_detail: "BREAK_GLASS_REVOKED" },
+          });
+          await telegram.sendReply("🔒 <b>BREAK-GLASS REVOKED</b> — normal Telegram approval flow restored.", { broadcast: true }).catch(() => {});
+          return { content: [{ type: "text" as const, text: "Break-glass token revoked. Normal approval flow restored." }] };
+        }
+
+        return { content: [{ type: "text" as const, text: wasActive ? "Token file removed." : "No active break-glass token found." }] };
+      }
+
+      case "atlas_audit_rotate": {
+        const currentSize = auditRotation.currentSize();
+        const rotResult = auditRotation.rotate();
+        if (!rotResult) {
+          return { content: [{ type: "text" as const, text: "No audit log to rotate (empty or missing)." }] };
+        }
+
+        audit.log("CONFIG_LOADED", {
+          meta: {
+            event_detail: "AUDIT_LOG_ROTATED",
+            archived_as: rotResult.record.rotated_name,
+            entry_count: rotResult.record.entry_count,
+            size_bytes: rotResult.record.size_bytes,
+          },
+        });
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              rotated: true,
+              archived_as: rotResult.record.rotated_name,
+              entries: rotResult.record.entry_count,
+              size_mb: (rotResult.record.size_bytes / 1024 / 1024).toFixed(2),
+              chain_anchor: rotResult.chainAnchor.slice(0, 16) + "...",
+            }, null, 2),
+          }],
+        };
+      }
+
+      case "atlas_audit_archives": {
+        const doVerify = Boolean(args?.verify);
+
+        if (doVerify) {
+          const verification = auditRotation.verifyArchives();
+          const stats = auditRotation.getStats();
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                ...verification,
+                ...stats,
+                total_size_mb: (stats.total_size_bytes / 1024 / 1024).toFixed(2),
+              }, null, 2),
+            }],
+          };
+        }
+
+        const archives = auditRotation.listArchives();
+        const stats = auditRotation.getStats();
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              ...stats,
+              total_size_mb: (stats.total_size_bytes / 1024 / 1024).toFixed(2),
+              archives: archives.map((a) => ({
+                name: a.rotated_name,
+                entries: a.entry_count,
+                size_mb: (a.size_bytes / 1024 / 1024).toFixed(2),
+                rotated_at: a.rotated_at,
+              })),
+            }, null, 2),
+          }],
+        };
+      }
+
       case "atlas_why_assess": {
         const whyAgentId = args?.agent_id as string | undefined;
         const windowMin = typeof args?.window_minutes === "number" ? args.window_minutes : whyConfig.windowMinutes;
@@ -775,6 +1155,21 @@ async function main(): Promise<void> {
 
     // Fire-and-forget baseline ingest — never block the gatekeeper
     baselineIngestEntry(entry, baselineStore).catch(() => {});
+
+    // Check if audit log needs rotation (non-blocking, fire-and-forget)
+    if (auditRotation.needsRotation()) {
+      try {
+        const rotResult = auditRotation.rotate();
+        if (rotResult) {
+          console.log(`[atlas] Audit log rotated: ${rotResult.record.rotated_name} (${rotResult.record.entry_count} entries, ${(rotResult.record.size_bytes / 1024 / 1024).toFixed(1)}MB)`);
+          // The AuditLogger will naturally start a new chain — its prevHash
+          // will be computed from the last entry it wrote (before the file was moved).
+          // The new file's first entry will reference the old chain via prev_hash.
+        }
+      } catch (err) {
+        console.error("[atlas] Audit rotation failed:", err);
+      }
+    }
 
     // Check if Why Layer should trigger (non-blocking)
     const trigger = shouldTrigger(entry, recentAuditEntries, triggerConfig, lastWhyAssessmentTime);
@@ -950,7 +1345,49 @@ async function main(): Promise<void> {
       return;
     }
 
-    // --- Step 3: Forward to Telegram for human verdict ---------------------
+    // --- Step 3: Quiet mode check (auto-approve low-risk for mature agents) --
+    if (policyResult.verdict === "ask") {
+      const agentBaseline = sessionAgentId
+        ? await baselineStore.get(sessionAgentId)
+        : undefined;
+      const quietResult = checkQuietEligibility(quietConfig, req, policyResult, attestation, agentBaseline);
+      if (quietResult.eligible) {
+        audit.log("POLICY_ALLOW", {
+          permission: req,
+          policy_result: policyResult,
+          verdict: "allow",
+          meta: {
+            ...identityMeta,
+            quiet_mode: true,
+            baseline_maturity: agentBaseline?.maturityLevel,
+            baseline_sessions: agentBaseline?.totalSessions,
+          },
+        });
+
+        sendVerdict(mcp, req.request_id, "allow");
+        return;
+      }
+    }
+
+    // --- Step 4: Break-glass check (bypass Telegram if active) ---------------
+    if (breakGlass.isActive()) {
+      breakGlass.recordUsage();
+      audit.log("POLICY_ALLOW", {
+        permission: req,
+        policy_result: policyResult,
+        verdict: "allow",
+        meta: {
+          ...identityMeta,
+          break_glass: true,
+          break_glass_reason: breakGlass.read()?.reason ?? "unknown",
+        },
+      });
+
+      sendVerdict(mcp, req.request_id, "allow");
+      return;
+    }
+
+    // --- Step 4: Forward to Telegram for human verdict ---------------------
     const promptFlags = [...policyResult.anomaly_flags];
     if (policyResult.sensitivity_matches.length > 0) {
       for (const sm of policyResult.sensitivity_matches) {

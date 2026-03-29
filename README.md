@@ -7,31 +7,32 @@ Atlas is designed around a single assumption: **the agent might be compromised**
 ## How it works
 
 ```
-              ┌─────────────────────────────────────────────────────────────┐
-              │                     Atlas Gatekeeper                      │
-              │                                                             │
-  Agent ─────►│  Identity ──► Policy ──► Why Layer ──► Telegram ──► Verdict │
-              │  Attestation   Engine     (CoE)         Relay       Allow/  │
-              │                                                     Deny   │
-              │     ▼            ▼          ▼              ▼          ▼     │
-              │  ┌──────────────────────────────────────────────────────┐   │
-              │  │              Quantum Audit Log                      │   │
-              │  │   SHA3-256 chain + ML-DSA-65 sigs + ATT&CK + ID    │   │
-              │  └──────────────────────────────────────────────────────┘   │
-              │                          ▼                                  │
-              │                  Behavioral Baseline                        │
-              │              (per-agent drift detection)                    │
-              └─────────────────────────────────────────────────────────────┘
+              ┌─────────────────────────────────────────────────────────────────┐
+              │                       Atlas Gatekeeper                         │
+              │                                                                 │
+  Agent ─────►│  Identity ──► Policy ──► Quiet ──► Break ──► Telegram ──► Verdict
+              │  Attestation   Engine    Mode?     Glass?     Relay      Allow/ │
+              │                                                          Deny  │
+              │     ▼            ▼         ▼         ▼          ▼          ▼    │
+              │  ┌──────────────────────────────────────────────────────────┐   │
+              │  │              Quantum Audit Log (+ rotation)             │   │
+              │  │   SHA3-256 chain + ML-DSA-65 sigs + ATT&CK + ID        │   │
+              │  └──────────────────────────────────────────────────────────┘   │
+              │                          ▼                                      │
+              │                  Behavioral Baseline                            │
+              │              (per-agent drift detection)                        │
+              └─────────────────────────────────────────────────────────────────┘
 ```
 
 When an agent requests permission to use a tool:
 
 1. **Identity attestation** — is the agent registered? Is its credential valid, unexpired, unrevoked? Does it have the required capability?
 2. **Policy engine** — 97 ordered rules evaluated against the request. 89 hard-deny rules block dangerous patterns immediately. 7 ask rules forward to the operator.
-3. **Why Layer** — if triggers fire (deny threshold, high-risk technique, identity anomaly, behavioral drift), a Council of 3 expert agents analyzes the event window and produces a risk assessment.
-4. **Telegram relay** — unresolved requests go to the operator. `yes <id>` or `no <id>`. No reply = denied.
-5. **Audit log** — every decision is recorded with ML-DSA-65 signatures, SHA3-256 hash chaining, MITRE ATT&CK enrichment, and agent identity binding.
-6. **Baseline update** — the decision is ingested into the agent's persistent behavioral profile for longitudinal drift detection.
+3. **Quiet mode** — if the agent is mature (200+ sessions), the request is low-risk (read-only, no anomaly flags, no sensitive paths), and quiet mode is enabled, auto-approve without Telegram.
+4. **Break-glass** — if a break-glass token is active (Telegram outage), auto-approve "ask" verdicts. Hard-deny rules are never bypassed.
+5. **Telegram relay** — unresolved requests go to the operator. `yes <id>` or `no <id>`. No reply = denied.
+6. **Audit log** — every decision is recorded with ML-DSA-65 signatures, SHA3-256 hash chaining, MITRE ATT&CK enrichment, and agent identity binding. Auto-rotated when size threshold is exceeded.
+7. **Baseline update** — the decision is ingested into the agent's persistent behavioral profile for longitudinal drift detection.
 
 ## Requirements
 
@@ -89,6 +90,13 @@ Atlas reads configuration from environment variables, a config file (`config.jso
 | `WHY_ENGINE_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `WHY_ENGINE_WINDOW_SIZE` | `50` | Max audit entries in assessment window |
 | `WHY_ENGINE_WINDOW_MINUTES` | `30` | Time window for assessment |
+| `ATLAS_QUIET_MODE` | `false` | Enable quiet mode for mature agents |
+| `ATLAS_QUIET_MIN_MATURITY` | `mature` | Minimum maturity for quiet mode (`established` or `mature`) |
+| `ATLAS_QUIET_TOOLS` | `Read,Glob,Grep` | Comma-separated tools eligible for quiet mode |
+| `ATLAS_QUIET_MAX_FLAGS` | `0` | Maximum anomaly flags allowed for quiet approval |
+| `ATLAS_AUDIT_MAX_SIZE_MB` | `10` | Audit log size before auto-rotation (MB) |
+| `ATLAS_AUDIT_MAX_ARCHIVES` | `0` | Maximum archived log files to keep (0 = unlimited) |
+| `ATLAS_BOOTSTRAP_SKIP_CONFIRM` | `false` | Skip bootstrap two-channel confirmation (dev/testing only) |
 
 ## Agent identity
 
@@ -118,7 +126,9 @@ Orchestrator agents can issue scoped sub-credentials to child agents. Delegation
 
 ### Bootstrap guard
 
-On first run (empty registry), Atlas allows requests through unverified so the system is not self-locking. Once the first credential is registered, identity enforcement activates.
+On first run (empty registry), Atlas allows requests through unverified so the system is not self-locking. The first credential registration requires **two-channel confirmation**: a 6-character code is printed to the server console and must be sent via Telegram by the operator. This proves physical host access + Telegram access simultaneously, preventing a compromised agent from registering a malicious admin credential during the bootstrap window.
+
+Once the first credential is registered, identity enforcement activates. Set `ATLAS_BOOTSTRAP_SKIP_CONFIRM=true` to bypass confirmation in dev/testing environments.
 
 ## Policy engine
 
@@ -155,6 +165,56 @@ The default ruleset contains **97 ordered rules** (89 deny + 7 ask) evaluated on
 ### Anomaly detection (always-on)
 
 Every request is scanned for velocity spikes, PII patterns (SSN, email, phone), obfuscation (base64, hex, eval, pipe chains), and data exfiltration indicators. Anomaly flags attach to the audit entry and appear in Telegram prompts.
+
+### Policy regression testing
+
+Run `atlas_test_policy` via MCP to validate all 97 rules against 120+ known malicious/benign fixtures. This should be run after any policy rule changes to catch regressions.
+
+```bash
+# From tests:
+npm test
+
+# From a Claude Code session:
+# Call atlas_test_policy (verbose: true for full report)
+```
+
+## Break-glass mechanism
+
+When Telegram is unreachable or expected to become unavailable, operators can activate a break-glass token that auto-approves "ask" verdicts without Telegram. This addresses the Telegram single-point-of-failure concern.
+
+**Security properties:**
+- Hard-deny rules are **never** bypassed — only "ask" verdicts
+- Token is time-limited (default: 1 hour, max: 4 hours)
+- Activation requires Telegram confirmation (or falls back to console-only when Telegram is already down)
+- Optional `max_requests` limit to cap auto-approved requests
+- All break-glass actions are prominently logged in the audit trail
+- Token stored at `<data_dir>/break-glass.token` (mode 0600)
+
+```
+# Activate via MCP tool:
+atlas_break_glass_activate(reason: "Telegram API outage", ttl_minutes: 60)
+
+# Check status:
+atlas_break_glass_status()
+
+# Revoke early:
+atlas_break_glass_revoke()
+```
+
+## Quiet mode
+
+For mature agents (200+ sessions) performing low-risk actions, quiet mode auto-approves requests without Telegram involvement — reducing noise while maintaining full audit trail coverage.
+
+**Eligibility requirements (all must be met):**
+- `ATLAS_QUIET_MODE=true` (off by default)
+- Agent baseline maturity >= configured threshold (default: `mature` / 200+ sessions)
+- Agent identity verified
+- Tool is in the quiet-eligible set (default: `Read`, `Glob`, `Grep`)
+- Zero anomaly flags on the request
+- No sensitivity classification matches
+- Input does not match any sensitive path pattern (`.env`, `.ssh`, `/etc/`, credentials, keys, tokens, `.pem`, `.key`, etc.)
+
+Non-eligible requests always go through the normal Telegram or break-glass flow.
 
 ## Why Layer (Council of Experts)
 
@@ -215,7 +275,7 @@ Drift signals are included in the Why Layer assessment, enriched into the audit 
 
 ## MCP tools
 
-Atlas exposes 13 MCP tools to the Claude Code session:
+Atlas exposes 20 MCP tools to the Claude Code session:
 
 ### Core
 
@@ -223,13 +283,13 @@ Atlas exposes 13 MCP tools to the Claude Code session:
 |---|---|
 | `atlas_reply` | Send a message to the operator via Telegram |
 | `atlas_audit_verify` | Verify audit log integrity (SHA3-256 chain + HMAC + ML-DSA-65) |
-| `atlas_status` | Runtime status: Telegram, identity, policy, audit, baselines |
+| `atlas_status` | Runtime status: Telegram, identity, policy, audit, quiet mode, break-glass, baselines |
 
 ### Identity management
 
 | Tool | Description |
 |---|---|
-| `atlas_identity_register` | Issue a signed agent credential |
+| `atlas_identity_register` | Issue a signed agent credential (bootstrap requires two-channel confirmation) |
 | `atlas_identity_verify` | Verify a credential by agentId |
 | `atlas_identity_list` | List credentials (filter: active, revoked, expired, delegated, all) |
 | `atlas_identity_revoke` | Revoke a credential |
@@ -251,6 +311,27 @@ Atlas exposes 13 MCP tools to the Claude Code session:
 | `atlas_baseline_drift` | Run drift detection against the current audit window |
 | `atlas_baseline_list` | List baseline profiles with maturity/role filters |
 
+### Policy testing
+
+| Tool | Description |
+|---|---|
+| `atlas_test_policy` | Run 120+ regression fixtures against current policy rules |
+
+### Break-glass
+
+| Tool | Description |
+|---|---|
+| `atlas_break_glass_activate` | Activate emergency Telegram bypass (time-limited, ask-only) |
+| `atlas_break_glass_status` | Check break-glass token status |
+| `atlas_break_glass_revoke` | Revoke break-glass token, restore normal flow |
+
+### Audit rotation
+
+| Tool | Description |
+|---|---|
+| `atlas_audit_rotate` | Manually trigger audit log rotation |
+| `atlas_audit_archives` | List or verify archived audit log files |
+
 ## Skills
 
 Three slash commands are available inside a Claude Code session:
@@ -268,6 +349,12 @@ The audit log is append-only JSONL with three layers of integrity protection:
 1. **SHA3-256 hash chaining** — tamper-evident, quantum-resistant, resistant to length-extension attacks
 2. **ML-DSA-65 post-quantum signatures** (FIPS 204) — non-repudiation holds against harvest-now-decrypt-later adversaries 10-15+ years forward
 3. **HMAC-SHA256 classical signatures** (optional) — backwards compatibility layer
+
+### Rotation
+
+When the audit log exceeds the configured size threshold (default: 10MB), it is automatically archived to `<data_dir>/audit-archive/audit-YYYYMMDD-HHMMSS.jsonl`. A rotation manifest tracks each archived file's SHA3-256 file hash and chain anchor, enabling integrity verification across the full archive.
+
+Configure with `ATLAS_AUDIT_MAX_SIZE_MB` and `ATLAS_AUDIT_MAX_ARCHIVES` (pruning).
 
 ### Entry schema
 
@@ -303,9 +390,12 @@ This is an optional hardening layer. Atlas works fully without it.
 
 ```
 src/
-├── index.ts               # MCP server, 13 tools, permission handler
+├── index.ts               # MCP server, 20 tools, permission handler (5-step pipeline)
+├── config.ts              # Configuration loader + 97 default rules
 ├── policy-engine.ts       # 97 rules, anomaly detection, velocity tracking
+├── policy-test-runner.ts  # Runtime regression test fixtures + runner
 ├── audit-log.ts           # SHA3-256 chain + ML-DSA-65 + HMAC + identity fields
+├── audit-rotation.ts      # Size-based log rotation with integrity manifest
 ├── quantum-signer.ts      # ML-DSA-65 keypair management, signing, verification
 ├── agent-identity.ts      # Credential types, issuance, verification, delegation
 ├── identity-registry.ts   # In-memory registry with JSON persistence
@@ -315,10 +405,11 @@ src/
 ├── baseline-types.ts      # Behavioral profile types, drift signals, maturity model
 ├── baseline-store.ts      # Per-agent JSON file persistence (atomic writes)
 ├── baseline-engine.ts     # Profile calculation, drift detection, ingestion
+├── break-glass.ts         # Emergency Telegram bypass (time-limited tokens)
+├── quiet-mode.ts          # Auto-approve low-risk actions for mature agents
 ├── mitre-attack.ts        # ATT&CK technique → name + tactic lookup (65+ entries)
 ├── identity-provider.ts   # DIB Briefcase integration (consent tiers)
-├── telegram.ts            # Telegram Bot API client (native fetch, long-polling)
-└── config.ts              # Configuration loader + 97 default rules
+└── telegram.ts            # Telegram Bot API client (native fetch, long-polling)
 ```
 
 **Dependencies**: `@modelcontextprotocol/sdk`, `zod`, `@noble/post-quantum`. No HTTP library — Telegram and Ollama use Node's native `fetch`.
@@ -329,16 +420,17 @@ src/
 npm run build && npm test
 ```
 
-359 tests across 14 test suites covering policy rules, audit integrity, quantum signing, identity lifecycle, credential delegation, attestation flow, Why Layer reasoning, trigger logic, baseline calculation, drift detection, and configuration loading.
+575 tests across 18 test suites covering policy rules, policy regression fixtures, audit integrity, audit rotation, quantum signing, identity lifecycle, credential delegation, attestation flow, Why Layer reasoning, trigger logic, baseline calculation, drift detection, break-glass mechanism, quiet mode eligibility, and configuration loading.
 
 ## Limitations
 
 - This is a security tool, not a compliance certification. It does not replace local review of high-risk actions, legal counsel, or organizational security policy.
-- The Telegram relay depends on Telegram's availability. If Telegram is unreachable, forwarded requests time out and are denied.
-- The policy engine uses glob patterns and string matching, not semantic analysis. Defense in depth applies.
+- The Telegram relay depends on Telegram's availability. The **break-glass mechanism** provides an emergency bypass when Telegram is unreachable (auto-deny remains the default without it).
+- The policy engine uses glob patterns and string matching, not semantic analysis. Known false positives exist (e.g., `TRUNCATE` matching the `ncat` network tool pattern). Defense in depth applies.
 - The Why Layer requires a running Ollama instance. Without it, the layer returns nominal stubs — it never blocks the gatekeeper.
 - Behavioral baselines need ~10 sessions before drift detection produces meaningful signals (maturity model handles this).
 - Agent secret keys are held in-memory only for delegation support — they do not survive process restarts.
+- Quiet mode requires explicit opt-in (`ATLAS_QUIET_MODE=true`) and only affects read-only tools for mature agents.
 
 ## License
 

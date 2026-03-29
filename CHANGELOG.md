@@ -2,6 +2,45 @@
 
 All notable changes to Atlas Protocol are documented in this file.
 
+## [0.8.0] - 2026-03-29
+
+### Added
+- **Policy Test Framework** — comprehensive regression testing for all 97 policy rules
+  - 120+ fixtures covering malicious, benign, ask, and edge-case inputs
+  - `atlas_test_policy` MCP tool for runtime regression testing
+  - MITRE ATT&CK ID validation per fixture
+  - Discovered 2 false-positive patterns: `TRUNCATE` matching `*ncat*`, `rsync` matching `*nc *`
+- **Bootstrap Confirmation** — two-channel verification for first credential registration
+  - 6-character confirmation code printed to server console
+  - Operator must confirm via Telegram to finalize bootstrap
+  - Prevents malicious first-credential registration during bootstrap window
+  - `ATLAS_BOOTSTRAP_SKIP_CONFIRM=true` env var for dev/testing
+- **Break-Glass Mechanism** — emergency override when Telegram is unreachable
+  - Time-limited token (default 1h, max 4h) stored at `<data_dir>/break-glass.token`
+  - Auto-approves "ask" verdicts only — hard-deny rules are NEVER bypassed
+  - Requires Telegram or console confirmation to activate
+  - Request counting with optional `max_requests` limit
+  - `atlas_break_glass_activate`, `atlas_break_glass_status`, `atlas_break_glass_revoke` MCP tools
+  - All break-glass actions prominently logged in audit trail
+- **Audit Log Rotation** — automatic archival when log exceeds size threshold
+  - Configurable via `ATLAS_AUDIT_MAX_SIZE_MB` (default: 10MB)
+  - Archives to `<data_dir>/audit-archive/` with timestamped filenames
+  - SHA3-256 file hash + chain anchor preserved in rotation manifest
+  - `atlas_audit_rotate` and `atlas_audit_archives` MCP tools
+  - Archive integrity verification (`atlas_audit_archives --verify`)
+  - Optional pruning with `ATLAS_AUDIT_MAX_ARCHIVES`
+- **Quiet Mode** — reduced noise for mature agents
+  - Auto-approves low-risk actions (Read, Glob, Grep) for mature agents (200+ sessions)
+  - Requires zero anomaly flags + non-sensitive path + verified identity
+  - Sensitive path detection: `.env`, `.ssh`, `/etc/`, credentials, keys, tokens
+  - Enable via `ATLAS_QUIET_MODE=true`
+  - Configurable maturity threshold: `ATLAS_QUIET_MIN_MATURITY=established|mature`
+
+### Changed
+- Permission handler now has 5 steps: attestation → policy → quiet mode → break-glass → Telegram
+- `atlas_status` now includes `quiet_mode` and `break_glass` status sections
+- Version bumped to 0.8.0
+
 ## [0.7.0] - 2026-03-28
 
 ### Added
