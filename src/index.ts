@@ -45,7 +45,7 @@ import { BreakGlassManager } from "./break-glass.js";
 import { AuditRotationManager } from "./audit-rotation.js";
 import { checkQuietEligibility, loadQuietConfig } from "./quiet-mode.js";
 
-const VERSION = "0.8.4";
+const VERSION = "1.0.0";
 
 const VALID_ROLES: AgentRole[] = ["claude-code", "orchestrator", "tool-caller", "observer", "admin"];
 const VALID_CAPABILITIES: AgentCapability[] = [

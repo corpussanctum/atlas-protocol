@@ -2,6 +2,17 @@
 
 All notable changes to Atlas Protocol are documented in this file.
 
+## [1.0.0] - 2026-03-29
+
+First stable release. All pre-tag blockers resolved, test vectors verified, spec status
+upgraded from Working Draft to Release Candidate.
+
+### Fixed
+- J.2 verifier pseudocode: `JSON.stringify(authority)` → `canonicalize(authority)` with D.2 reference
+
+### Changed
+- SPEC.md version: 0.8.4-draft → 1.0.0 Release Candidate
+
 ## [0.8.4] - 2026-03-29
 
 ### Added (SPEC.md — adoption and clarity)

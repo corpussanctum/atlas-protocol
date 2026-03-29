@@ -1,7 +1,7 @@
 # Atlas Protocol Specification
 
-**Version:** 0.8.4-draft
-**Status:** Working Draft
+**Version:** 1.0.0
+**Status:** Release Candidate
 **Authors:** TJ Lane (Corpus Sanctum)
 **Last updated:** 2026-03-29
 
@@ -1216,7 +1216,7 @@ function verifyDelegatedCredential(credential, registry, issuerPublicKey):
         depth: credential.delegation.depth,
         childCredentialHash: baseHash
     }
-    authorityPayload = JSON.stringify(authority)
+    authorityPayload = canonicalize(authority)  // keys MUST be sorted per D.2
 
     if not ML-DSA-65.verify(parent.publicKey, authorityPayload, credential.delegation.chainSignature):
         return "chain signature invalid"
