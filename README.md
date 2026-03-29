@@ -398,6 +398,22 @@ If `ATLAS_BRIEFCASE_PATH` points to a [DIB Briefcase](https://github.com/corpuss
 
 This is an optional hardening layer. Atlas works fully without it.
 
+## DIDComm adapter
+
+The [`atlas-didcomm-adapter`](packages/atlas-didcomm-adapter/) package binds DIDComm peer-to-peer messaging to the Atlas gatekeeper. Every message between agents — personal agent to clinic agent, orchestrator to sub-agent — is governed by the same identity, policy, and audit trail that governs tool calls.
+
+Key capabilities:
+- **Peer pairing** via DIDComm out-of-band invitations with Atlas authorization
+- **Delegation-aware messaging** — orchestrators delegate scoped messaging authority to sub-agents for specific peers (capability-restricted, message-type-restricted, time-limited, cascade-revocable)
+- **Rigid 10-step enforcement pipeline** on every inbound and outbound message
+- **Persistent replay protection** that survives process restarts
+- **Credo-TS transport** included for the personal agent / clinic agent demo
+- **129 tests** covering enforcement, delegation, replay, and the full orchestrator flow
+
+The transport is pluggable — the adapter doesn't depend on any DIDComm library. `DidcommTransport` is a 4-method interface; the included `CredoTransport` is one implementation.
+
+See [`packages/atlas-didcomm-adapter/README.md`](packages/atlas-didcomm-adapter/README.md) for full documentation.
+
 ## Architecture
 
 ```
@@ -422,17 +438,38 @@ src/
 ├── mitre-attack.ts        # ATT&CK technique → name + tactic lookup (65+ entries)
 ├── identity-provider.ts   # DIB Briefcase integration (consent tiers)
 └── telegram.ts            # Telegram Bot API client (native fetch, long-polling)
+
+packages/atlas-didcomm-adapter/
+├── src/
+│   ├── types.ts           # DIDComm adapter interfaces (PeerBinding, DidcommTransport, etc.)
+│   ├── pairing.ts         # Peer pairing + delegation scope management
+│   ├── inbound.ts         # 10-step inbound enforcement pipeline
+│   ├── outbound.ts        # 10-step outbound enforcement pipeline
+│   ├── classifier.ts      # Message classification (health, financial, pairing)
+│   ├── peer-store.ts      # Peer store + persistent message ID log
+│   ├── index.ts           # AtlasDidcommAdapter facade
+│   └── transports/
+│       └── credo.ts       # Credo-TS transport implementation
+└── tests/                 # 129 tests across 10 test files
 ```
 
-**Dependencies**: `@modelcontextprotocol/sdk`, `zod`, `@noble/post-quantum`. No HTTP library — Telegram and Ollama use Node's native `fetch`.
+**Core dependencies**: `@modelcontextprotocol/sdk`, `zod`, `@noble/post-quantum`. No HTTP library — Telegram and Ollama use Node's native `fetch`.
+
+**Adapter dependencies**: None (transport is an interface). Credo-TS is an optional peer dependency.
 
 ## Testing
 
 ```bash
-npm run build && npm test
+# Core gatekeeper
+npm run build && npm test  # 575 tests
+
+# DIDComm adapter
+cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 ```
 
-575 tests across 18 test suites covering policy rules, policy regression fixtures, audit integrity, audit rotation, quantum signing, identity lifecycle, credential delegation, attestation flow, Why Layer reasoning, trigger logic, baseline calculation, drift detection, break-glass mechanism, quiet mode eligibility, and configuration loading.
+**Core** (575 tests): policy rules, regression fixtures, audit integrity, audit rotation, quantum signing, identity lifecycle, credential delegation, attestation flow, Why Layer reasoning, trigger logic, baseline calculation, drift detection, break-glass mechanism, quiet mode eligibility, and configuration loading.
+
+**Adapter** (129 tests): peer pairing, classification, policy mapping, inbound/outbound enforcement, delegation scope enforcement, replay protection persistence, Credo-TS transport, and full orchestrator integration flow.
 
 ## Limitations
 
