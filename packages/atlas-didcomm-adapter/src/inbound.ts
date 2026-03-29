@@ -66,7 +66,59 @@ export class InboundHandler {
       };
     }
 
-    // Step 4: Classify
+    // Step 4: Delegation scope check (if peer has a scoped delegation)
+    if (peer.delegationScope) {
+      const scope = peer.delegationScope;
+
+      // Check delegation expiry
+      if (new Date(scope.expiresAt) <= new Date()) {
+        await this.atlas.logEvent(buildReceiveDeny({
+          peerDid: senderDid,
+          agentId: scope.delegatedAgentId,
+          messageType: msg.type,
+          reason: "DELEGATION_EXPIRED",
+        }));
+        return { delivered: false, reason: "DELEGATION_EXPIRED", event: "DIDCOMM_RECEIVE_DENY" };
+      }
+
+      // Check direction allowed
+      if (!scope.allowedDirections.includes("receive")) {
+        await this.atlas.logEvent(buildReceiveDeny({
+          peerDid: senderDid,
+          agentId: scope.delegatedAgentId,
+          messageType: msg.type,
+          reason: "DELEGATION_DIRECTION_DENIED",
+        }));
+        return { delivered: false, reason: "DELEGATION_DIRECTION_DENIED", event: "DIDCOMM_RECEIVE_DENY" };
+      }
+
+      // Check message type allowed (empty = all)
+      if (scope.allowedMessageTypes.length > 0 && !scope.allowedMessageTypes.includes(msg.type)) {
+        await this.atlas.logEvent(buildReceiveDeny({
+          peerDid: senderDid,
+          agentId: scope.delegatedAgentId,
+          messageType: msg.type,
+          reason: "DELEGATION_MESSAGE_TYPE_DENIED",
+        }));
+        return { delivered: false, reason: "DELEGATION_MESSAGE_TYPE_DENIED", event: "DIDCOMM_RECEIVE_DENY" };
+      }
+
+      // Check delegation validity via Atlas bridge (if supported)
+      if (this.atlas.isDelegationValid) {
+        const valid = await this.atlas.isDelegationValid(scope.delegatedAgentId);
+        if (!valid) {
+          await this.atlas.logEvent(buildReceiveDeny({
+            peerDid: senderDid,
+            agentId: scope.delegatedAgentId,
+            messageType: msg.type,
+            reason: "DELEGATION_REVOKED",
+          }));
+          return { delivered: false, reason: "DELEGATION_REVOKED", event: "DIDCOMM_RECEIVE_DENY" };
+        }
+      }
+    }
+
+    // Step 5: Classify
     const classified = this.classifier.classifyInbound(msg);
 
     // Step 5: Build Atlas permission request

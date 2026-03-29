@@ -47,6 +47,35 @@ export interface PeerBinding {
   updatedAt: string;
   lastSeenAt?: string;
   metadata?: Record<string, string>;
+  /** Delegation scope — if set, this peer is serviced by a delegated sub-agent */
+  delegationScope?: DelegationScope;
+}
+
+// ---------------------------------------------------------------------------
+// Delegation scope (Milestone 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * When an orchestrator delegates messaging authority for a specific peer,
+ * the DelegationScope binds a delegated credential to that peer with
+ * restricted capabilities. The adapter enforces these restrictions before
+ * calling Atlas authorize().
+ */
+export interface DelegationScope {
+  /** The delegated agent's did:atlas ID */
+  delegatedAgentId: string;
+  /** The parent (orchestrator) agent's did:atlas ID */
+  parentAgentId: string;
+  /** Capabilities the delegated agent holds (subset of parent's) */
+  grantedCapabilities: MessagingCapability[];
+  /** Message types this delegation is restricted to (empty = all) */
+  allowedMessageTypes: string[];
+  /** Directions this delegation allows */
+  allowedDirections: Array<"send" | "receive">;
+  /** When this delegation expires */
+  expiresAt: string;
+  /** When this delegation was created */
+  createdAt: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +235,8 @@ export interface AtlasBridge {
   logEvent(event: AtlasDidcommAuditEvent): Promise<void>;
   registerPeerBinding(binding: PeerBinding): Promise<void>;
   revokePeerBinding(peerDid: string, reason: string): Promise<void>;
+  /** Check if a delegated credential is still valid (not expired/revoked). Optional — adapter degrades gracefully. */
+  isDelegationValid?(agentId: string): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------

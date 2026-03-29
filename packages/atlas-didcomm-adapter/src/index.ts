@@ -22,6 +22,7 @@ export type {
   OutboundResult,
   MessagingCapability,
   DidcommDirection,
+  DelegationScope,
 } from "./types.js";
 
 // Core classes
@@ -62,6 +63,7 @@ import type {
   InboundResult,
   OutboundResult,
   PeerBinding,
+  DelegationScope,
 } from "./types.js";
 import { PairingManager } from "./pairing.js";
 import type { PairingInvite, PairingResult } from "./pairing.js";
@@ -137,6 +139,20 @@ export class AtlasDidcommAdapter {
 
   revokePeer(peerDid: string, reason: string): Promise<PeerBinding> {
     return this.pairing.revokePeer(peerDid, reason);
+  }
+
+  // -- Delegation ------------------------------------------------------------
+
+  bindPeerToAgent(peerDid: string, agentId: string): Promise<PeerBinding> {
+    return this.pairing.bindPeerToAgent(peerDid, agentId);
+  }
+
+  setDelegationScope(peerDid: string, scope: DelegationScope): Promise<PeerBinding> {
+    return this.pairing.setDelegationScope(peerDid, scope);
+  }
+
+  clearDelegationScope(peerDid: string): Promise<PeerBinding> {
+    return this.pairing.clearDelegationScope(peerDid);
   }
 
   // -- Messaging -------------------------------------------------------------

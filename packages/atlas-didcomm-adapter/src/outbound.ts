@@ -55,7 +55,55 @@ export class OutboundHandler {
       return { sent: false, reason, event: "DIDCOMM_SEND_DENY" };
     }
 
-    // Step 3: Classify
+    // Step 3: Delegation scope check (if peer has a scoped delegation)
+    if (peer.delegationScope) {
+      const scope = peer.delegationScope;
+
+      if (new Date(scope.expiresAt) <= new Date()) {
+        await this.atlas.logEvent(buildSendDeny({
+          peerDid,
+          agentId: scope.delegatedAgentId,
+          messageType: msg.type,
+          reason: "DELEGATION_EXPIRED",
+        }));
+        return { sent: false, reason: "DELEGATION_EXPIRED", event: "DIDCOMM_SEND_DENY" };
+      }
+
+      if (!scope.allowedDirections.includes("send")) {
+        await this.atlas.logEvent(buildSendDeny({
+          peerDid,
+          agentId: scope.delegatedAgentId,
+          messageType: msg.type,
+          reason: "DELEGATION_DIRECTION_DENIED",
+        }));
+        return { sent: false, reason: "DELEGATION_DIRECTION_DENIED", event: "DIDCOMM_SEND_DENY" };
+      }
+
+      if (scope.allowedMessageTypes.length > 0 && !scope.allowedMessageTypes.includes(msg.type)) {
+        await this.atlas.logEvent(buildSendDeny({
+          peerDid,
+          agentId: scope.delegatedAgentId,
+          messageType: msg.type,
+          reason: "DELEGATION_MESSAGE_TYPE_DENIED",
+        }));
+        return { sent: false, reason: "DELEGATION_MESSAGE_TYPE_DENIED", event: "DIDCOMM_SEND_DENY" };
+      }
+
+      if (this.atlas.isDelegationValid) {
+        const valid = await this.atlas.isDelegationValid(scope.delegatedAgentId);
+        if (!valid) {
+          await this.atlas.logEvent(buildSendDeny({
+            peerDid,
+            agentId: scope.delegatedAgentId,
+            messageType: msg.type,
+            reason: "DELEGATION_REVOKED",
+          }));
+          return { sent: false, reason: "DELEGATION_REVOKED", event: "DIDCOMM_SEND_DENY" };
+        }
+      }
+    }
+
+    // Step 4: Classify
     const classified = this.classifier.classifyOutbound(msg);
 
     // Step 4: Build Atlas permission request

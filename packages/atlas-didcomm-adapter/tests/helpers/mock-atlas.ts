@@ -15,7 +15,10 @@ export class MockAtlasBridge implements AtlasBridge {
   async registerPeerBinding(binding: PeerBinding): Promise<void> { this.registeredPeers.push(binding); }
   async revokePeerBinding(peerDid: string, reason: string): Promise<void> { this.revokedPeers.push({ peerDid, reason }); }
 
+  // Optional — delegation validity check. Set to a function to enable.
+  isDelegationValid?: (agentId: string) => Promise<boolean>;
+
   getLastEvent(): AtlasDidcommAuditEvent | undefined { return this.events[this.events.length - 1]; }
   getEventsByType(type: string): AtlasDidcommAuditEvent[] { return this.events.filter(e => e.event === type); }
-  reset(): void { this.events = []; this.defaultVerdict = "allow"; this.registeredPeers = []; this.revokedPeers = []; }
+  reset(): void { this.events = []; this.defaultVerdict = "allow"; this.registeredPeers = []; this.revokedPeers = []; this.isDelegationValid = undefined; }
 }
