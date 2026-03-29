@@ -400,18 +400,20 @@ function buildDelegationAuthority(params: {
   depth: number;
   childCredentialHash: string;
 }): string {
-  return JSON.stringify({
-    protocol: "atlas-protocol",
-    version: CREDENTIAL_VERSION,
-    type: "delegation-authority",
-    rootId: params.rootId,
-    parentId: params.parentId,
-    childId: params.childId,
+  // Build the object then sort keys per Appendix D.2 canonical serialization
+  const obj: Record<string, unknown> = {
     capabilities: [...params.capabilities].sort(),
-    expiresAt: params.expiresAt,
-    depth: params.depth,
     childCredentialHash: params.childCredentialHash,
-  });
+    childId: params.childId,
+    depth: params.depth,
+    expiresAt: params.expiresAt,
+    parentId: params.parentId,
+    protocol: "atlas-protocol",
+    rootId: params.rootId,
+    type: "delegation-authority",
+    version: CREDENTIAL_VERSION,
+  };
+  return JSON.stringify(obj);
 }
 
 // ---------------------------------------------------------------------------

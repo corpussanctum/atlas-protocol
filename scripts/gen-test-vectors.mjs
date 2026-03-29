@@ -52,18 +52,18 @@ console.log("Key:", redKey);
 console.log("Value:", ssn);
 console.log("HMAC-SHA256:", redacted);
 
-// Test vector 4: Delegation authority hash
+// Test vector 4: Delegation authority hash (keys sorted per D.2)
 const delAuth = {
-  protocol: "atlas-protocol",
-  version: "0.5.0",
-  type: "delegation-authority",
-  rootId: "did:atlas:00000000-0000-4000-8000-000000000001",
-  parentId: "did:atlas:00000000-0000-4000-8000-000000000001",
-  childId: "did:atlas:00000000-0000-4000-8000-000000000002",
   capabilities: ["file:read"],
-  expiresAt: "2026-03-30T00:00:00.000Z",
-  depth: 1,
   childCredentialHash: credHash,
+  childId: "did:atlas:00000000-0000-4000-8000-000000000002",
+  depth: 1,
+  expiresAt: "2026-03-30T00:00:00.000Z",
+  parentId: "did:atlas:00000000-0000-4000-8000-000000000001",
+  protocol: "atlas-protocol",
+  rootId: "did:atlas:00000000-0000-4000-8000-000000000001",
+  type: "delegation-authority",
+  version: "0.5.0",
 };
 const delCanonical = JSON.stringify(delAuth);
 const delHash = createHash("sha3-256").update(delCanonical).digest("hex");

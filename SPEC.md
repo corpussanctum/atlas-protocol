@@ -129,7 +129,7 @@ did:atlas:<uuid>
 
 Where `<uuid>` is a RFC 4122 v4 UUID. Example: `did:atlas:550e8400-e29b-41d4-a716-446655440000`.
 
-> **Scope constraint:** `did:atlas` as defined in this specification is a **local, single-operator DID method**. It does not define federated namespace resolution, inter-operator trust exchange, or a public resolution network. Cross-operator use cases will require a future DID method version with new syntax and resolution semantics. Implementations MUST NOT advertise `did:atlas` identifiers as globally resolvable.
+> **Scope constraint:** `did:atlas` as defined in this specification is a **local, single-operator DID method**. It does not define federated namespace resolution, inter-operator trust exchange, or a public resolution network. Cross-operator use cases will require a future DID method version with new syntax and resolution semantics. Implementations MUST NOT advertise `did:atlas` identifiers as globally resolvable. See [corpussanctum/atlas-protocol#1](https://github.com/corpussanctum/atlas-protocol/issues/1) for federation tracking.
 
 ### 4.2 DID document
 
@@ -248,6 +248,10 @@ For **Production** and **Research** conformance, the first credential registrati
 
 For **Development** conformance, two-channel confirmation MAY be skipped (via `ATLAS_BOOTSTRAP_SKIP_CONFIRM=true`). When skipped, a `BOOTSTRAP_CONFIRM_SKIPPED` event MUST be logged.
 
+**Recovery from failed bootstrap:**
+
+If the registry must be reset after an accidental or compromised first registration, an operator with physical host access MAY delete the identity registry file at `<data_dir>/identity-registry.json`. A `REGISTRY_RESET` event MUST be written to the audit log before deletion. After deletion, the bootstrap window re-opens and two-channel confirmation MUST be repeated (for Production/Research conformance).
+
 ## 5. Credential delegation
 
 ### 5.1 Delegation constraints
@@ -353,7 +357,7 @@ Checkpoints are `CHECKPOINT` audit entries emitted at configurable intervals. Ea
 |---|---|
 | `checkpoint_seq` | Sequence number of this checkpoint entry |
 | `checkpoint_hash` | SHA3-256 hash of the entry at `checkpoint_seq - 1` |
-| `entries_since_start` | Equal to `checkpoint_seq + 1` — the total number of entries written to the **current file** (resets to 0 after rotation). This is a local-file counter, not a global counter. Use `seq` for the global count. |
+| `entries_since_start` | Number of entries written to the **current file** up to and including this checkpoint. Computed as `checkpoint_seq - first_seq_of_current_file + 1`, where `first_seq_of_current_file` is `0` for the first file or `next_seq` from the rotation manifest for subsequent files. This is a local-file counter, not a global counter — use `seq` for global counting. |
 | `pq_signature` | ML-DSA-65 signature of the checkpoint (if signer available) |
 
 **Conformance requirements:**
@@ -507,6 +511,8 @@ interface ExpertAssessment {
 - Treat the assessment's `confidence` as no higher than `"low"`, regardless of the model's self-reported confidence.
 - Display a visible indicator (e.g., "(ungrounded)") in any UI that surfaces the finding.
 - Exclude ungrounded findings from automated escalation decisions.
+
+**Grounding limitation:** String-matching grounding cannot guarantee that a model citation is semantically accurate — only that it references an entry that exists in the analyzed window. Consumers SHOULD independently verify that cited entries contain the evidence described in the signal. A model may confabulate a plausible-looking reference to a real entry ID.
 
 Research artifacts that contain ungrounded signals MUST NOT be presented as primary evidence without explicit disclosure.
 
@@ -790,6 +796,7 @@ The following fields are derived (computed from the canonical payload itself) an
 | Context | Excluded fields |
 |---|---|
 | **Credential payloads** | `issuerSignature`, `credentialHash` |
+| **Delegated credential payloads** (when computing `childCredentialHash` for the delegation authority) | `issuerSignature`, `credentialHash`, `delegated`, `delegation` (the entire delegation object). The `childCredentialHash` commits to the credential's identity, capabilities, and validity — not to its delegation chain position. This prevents a circular dependency between `chainSignature` and `childCredentialHash`. |
 | **Delegation authority payloads** | (none — the entire object is the signed payload) |
 | **Audit entries** (hash chain) | `hmac`, `pq_signature` (the entry is hashed/signed without these fields; they are appended after) |
 | **Checkpoint entries** | `pq_signature` |
@@ -800,12 +807,15 @@ The following fields are derived (computed from the canonical payload itself) an
 **Credential canonical payload:**
 1. Start with the full `AgentCredential` object.
 2. Remove `issuerSignature` and `credentialHash`.
-3. Sort all object keys lexicographically (recursive).
-4. Sort `capabilities` array lexicographically.
-5. Normalize all timestamps per D.3.
-6. Serialize per D.2.
-7. The `credentialHash` is SHA3-256 of the resulting byte string.
-8. The `issuerSignature` is ML-DSA-65 sign of the resulting byte string.
+3. **For delegated credentials computing `childCredentialHash`:** also remove `delegated` and `delegation` (see D.5). This prevents the circular dependency between `chainSignature` and `childCredentialHash`.
+4. Sort all object keys lexicographically (recursive).
+5. Sort `capabilities` array lexicographically.
+6. Normalize all timestamps per D.3.
+7. Serialize per D.2.
+8. The `credentialHash` is SHA3-256 of the resulting byte string.
+9. The `issuerSignature` is ML-DSA-65 sign of the resulting byte string.
+
+> **Note:** The final `credentialHash` on a delegated credential is computed from the *full* canonical payload (including `delegated` and `delegation` fields, but excluding `issuerSignature` and `credentialHash`). The `childCredentialHash` in the delegation authority is a *different* hash — computed from the base fields only (step 3 above). These are intentionally different values.
 
 **Delegation authority payload:**
 1. Construct the delegation authority object per §5.2.
@@ -954,22 +964,24 @@ The `credentialHash` is computed over the canonical payload (all fields except `
 
 ### F.3 Delegation authority payload (signed by parent)
 
+Keys are sorted per Appendix D.2:
+
 ```json
 {
-  "protocol": "atlas-protocol",
-  "version": "0.5.0",
-  "type": "delegation-authority",
-  "rootId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
-  "parentId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
-  "childId": "did:atlas:6ba7b810-9dad-11d1-80b4-00c04fd430c8",
   "capabilities": ["file:read"],
-  "expiresAt": "2026-03-30T14:00:00.000Z",
+  "childCredentialHash": "7d9f2a...",
+  "childId": "did:atlas:6ba7b810-9dad-11d1-80b4-00c04fd430c8",
   "depth": 1,
-  "childCredentialHash": "7d9f2a..."
+  "expiresAt": "2026-03-30T14:00:00.000Z",
+  "parentId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
+  "protocol": "atlas-protocol",
+  "rootId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
+  "type": "delegation-authority",
+  "version": "0.5.0"
 }
 ```
 
-The `chainSignature` in the delegated credential is ML-DSA-65 sign(parentSecretKey, JSON.stringify(above)).
+The `chainSignature` in the delegated credential is ML-DSA-65 sign(parentSecretKey, canonicalize(above)).
 
 ### F.4 Audit entry (POLICY_DENY)
 
@@ -1084,12 +1096,12 @@ These test vectors allow third-party implementations to verify canonical seriali
 
 ### G.3 Delegation authority hash
 
-**Input:**
+**Input (canonical form, keys sorted per D.2):**
 ```
-{"protocol":"atlas-protocol","version":"0.5.0","type":"delegation-authority","rootId":"did:atlas:00000000-0000-4000-8000-000000000001","parentId":"did:atlas:00000000-0000-4000-8000-000000000001","childId":"did:atlas:00000000-0000-4000-8000-000000000002","capabilities":["file:read"],"expiresAt":"2026-03-30T00:00:00.000Z","depth":1,"childCredentialHash":"3b48e327089abd0ca4578d6cfb8a57a0568544dc3b82e199e77f9ab553e3e6e7"}
+{"capabilities":["file:read"],"childCredentialHash":"3b48e327089abd0ca4578d6cfb8a57a0568544dc3b82e199e77f9ab553e3e6e7","childId":"did:atlas:00000000-0000-4000-8000-000000000002","depth":1,"expiresAt":"2026-03-30T00:00:00.000Z","parentId":"did:atlas:00000000-0000-4000-8000-000000000001","protocol":"atlas-protocol","rootId":"did:atlas:00000000-0000-4000-8000-000000000001","type":"delegation-authority","version":"0.5.0"}
 ```
 
-**Expected SHA3-256:** `4cde93186bcc1d1442ebf69c6ef44e3aec8b46c516649087318148baaa91538d`
+**Expected SHA3-256:** `d4a72d8a5b6944be81b357daf3c5ab81496865b7c9e51faa573e1459eefa8a68`
 
 ### G.4 Redacted field (keyed hash)
 
