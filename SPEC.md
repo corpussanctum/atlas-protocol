@@ -129,7 +129,7 @@ did:atlas:<uuid>
 
 Where `<uuid>` is a RFC 4122 v4 UUID. Example: `did:atlas:550e8400-e29b-41d4-a716-446655440000`.
 
-> **Scope constraint:** `did:atlas` in this version (v0.8.x / v1.0.0) is a **local, single-operator DID method**. It does not define federated namespace resolution, inter-operator trust exchange, or a public resolution network. Cross-operator use cases will require a future DID method version with new syntax and resolution semantics. Implementations MUST NOT advertise `did:atlas` identifiers as globally resolvable.
+> **Scope constraint:** `did:atlas` as defined in this specification is a **local, single-operator DID method**. It does not define federated namespace resolution, inter-operator trust exchange, or a public resolution network. Cross-operator use cases will require a future DID method version with new syntax and resolution semantics. Implementations MUST NOT advertise `did:atlas` identifiers as globally resolvable.
 
 ### 4.2 DID document
 
@@ -353,7 +353,7 @@ Checkpoints are `CHECKPOINT` audit entries emitted at configurable intervals. Ea
 |---|---|
 | `checkpoint_seq` | Sequence number of this checkpoint entry |
 | `checkpoint_hash` | SHA3-256 hash of the entry at `checkpoint_seq - 1` |
-| `entries_since_start` | Total entries since the audit log began (or since last rotation) |
+| `entries_since_start` | Equal to `checkpoint_seq + 1` — the total number of entries written to the **current file** (resets to 0 after rotation). This is a local-file counter, not a global counter. Use `seq` for the global count. |
 | `pq_signature` | ML-DSA-65 signature of the checkpoint (if signer available) |
 
 **Conformance requirements:**
@@ -642,21 +642,21 @@ Fields under `extensions` MUST be ignored by implementations that do not recogni
 
 ### 11.2 Version negotiation
 
-The protocol version appears in several locations:
+Atlas uses two distinct version identifiers:
 
-| Location | Field | Authoritative? |
-|---|---|---|
-| Credential `version` field | `"0.5.0"` (credential schema version) | For credential structure |
-| Delegation authority `version` | Protocol version at delegation time | For delegation structure |
-| `SESSION_START` audit entry | `meta.version` | For gatekeeper runtime |
-| `ModelProvenance.protocolVersion` | Protocol version at assessment time | For Why Layer output |
+| Identifier | Current value | Meaning | Where it appears |
+|---|---|---|---|
+| **Credential schema version** | `"0.5.0"` | Structure of `AgentCredential` objects. Changes when fields are added/removed from the credential type. | Credential `version` field |
+| **Protocol version** | `"0.8.4"` | The overall spec version governing pipeline behavior, audit format, delegation semantics, and conformance requirements. | `SESSION_START` → `meta.version`, delegation authority → `version`, `ModelProvenance.protocolVersion` |
+
+These are independent. A gatekeeper at protocol version 0.8.4 may issue credentials with schema version 0.5.0. The credential schema version changes only when the credential structure changes — it has not changed since v0.5.0.
 
 **Version authority rules:**
 
-- The **gatekeeper's runtime version** (from `SESSION_START`) is the authoritative version for the current session's behavior.
-- The **credential version** indicates which credential schema was used. A gatekeeper MAY accept credentials from older schema versions if the fields are a subset.
-- A gatekeeper MUST NOT accept credentials from a **newer major version** than it implements (e.g., a v0.x gatekeeper MUST reject a v1.x credential).
-- Minor version differences (e.g., v0.8.1 vs v0.8.3) MUST be tolerated — newer minor versions add fields but do not remove or redefine existing ones.
+- The **gatekeeper's protocol version** (from `SESSION_START → meta.version`) is authoritative for the current session's behavior.
+- The **credential schema version** indicates which credential structure was used. A gatekeeper MAY accept credentials from older schema versions if the fields are a subset.
+- A gatekeeper MUST NOT accept credentials from a **newer major version** than it implements (e.g., a schema v0.x gatekeeper MUST reject a schema v1.x credential).
+- Minor version differences within the same major version MUST be tolerated — newer minor versions add fields but do not remove or redefine existing ones.
 - A verifier that encounters an audit entry with an unrecognized `hash_algorithm` MUST report an error rather than silently skip verification.
 
 **Compatibility matrix:**
@@ -758,7 +758,7 @@ Canonical JSON MUST follow these rules:
 
 | Rule | Requirement |
 |---|---|
-| **Key ordering** | Object keys MUST be sorted lexicographically by their UTF-8 byte representation (equivalent to `Array.prototype.sort()` in JavaScript). This applies recursively to all nested objects. |
+| **Key ordering** | Object keys MUST be sorted by comparing their UTF-8 byte sequences left-to-right, byte-by-byte, unsigned. Shorter keys sort before longer keys when all preceding bytes match (i.e., `"a"` < `"aa"`). This is the same as C `memcmp` on the UTF-8 encoded key bytes. This applies recursively to all nested objects. **Note:** JavaScript's `Array.prototype.sort()` uses UTF-16 code unit comparison, which differs from UTF-8 byte order for characters above U+007F. Implementations using JavaScript MUST either restrict keys to ASCII (true for all Atlas-defined fields) or implement explicit UTF-8 byte comparison. |
 | **Array ordering** | Arrays MUST preserve their logical order, except where the spec explicitly requires sorting (e.g., `capabilities` arrays MUST be sorted lexicographically before serialization). |
 | **Whitespace** | No insignificant whitespace. No spaces after `:` or `,`. No newlines. No indentation. Equivalent to `JSON.stringify(obj)` with no replacer or space arguments, applied to a key-sorted object. |
 | **Strings** | MUST use the minimal JSON escape sequences. Characters above U+001F that do not require escaping MUST NOT be escaped. Unicode escapes MUST use lowercase hex (`\u00e9`, not `\U00E9` or `\u00E9`). |

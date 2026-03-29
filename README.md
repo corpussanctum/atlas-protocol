@@ -365,6 +365,7 @@ Configure with `ATLAS_AUDIT_MAX_SIZE_MB` and `ATLAS_AUDIT_MAX_ARCHIVES` (pruning
 | `id` | UUID |
 | `timestamp` | ISO 8601 |
 | `event` | Event type |
+| `seq` | Global monotonic sequence number (0-indexed, never resets across rotations) |
 | `rule_id` | Matched policy rule pattern |
 | `mitre` | ATT&CK enrichment: `{ id, name, tactic }` |
 | `agentId` | DID of the attested agent |
@@ -377,6 +378,15 @@ Configure with `ATLAS_AUDIT_MAX_SIZE_MB` and `ATLAS_AUDIT_MAX_ARCHIVES` (pruning
 | `prev_hash` | SHA3-256 of previous log line |
 | `hmac` | HMAC-SHA256 signature (if configured) |
 | `pq_signature` | ML-DSA-65 signature, base64-encoded |
+
+### Security architecture notes
+
+The audit log includes hardening beyond basic hash chaining (see [SPEC.md](SPEC.md) for normative details):
+
+- **Anti-truncation**: Global monotonic `seq` numbers detect silent log truncation. Periodic `CHECKPOINT` entries anchor the chain state at configurable intervals (required for Production and Research conformance profiles).
+- **Rotation bridging**: When logs rotate, the manifest records `final_seq` and `final_hash` from the old file. The new file's first entry continues the sequence and chain. Cross-archive verification is deterministic (SPEC.md §6.5).
+- **Keyed redaction**: Sensitive fields use HMAC-SHA256 (not bare SHA-256) to prevent brute-force reversal on low-entropy values like SSNs. See SPEC.md §6.7.
+- **Local DID scope**: `did:atlas` identifiers are scoped to the local gatekeeper's registry, not globally resolvable. See SPEC.md §4.1.
 
 ### Key management
 
