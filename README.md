@@ -1,32 +1,37 @@
 # Fidelis Channel
 
-A Claude Code plugin that relays tool-approval prompts to Telegram, enforces 96 hardened security rules locally, and records every decision in a quantum-resistant, tamper-evident audit log.
+A Claude Code plugin that gates autonomous agent sessions with identity attestation, behavioral baselines, and a post-quantum audit trail — all relayed through Telegram for operator oversight.
 
-Fidelis is designed around a single assumption: **the agent might be compromised**. Every default is fail-closed — no token means no approvals, no chat ID means no inbound messages, and timeouts always deny.
+Fidelis is designed around a single assumption: **the agent might be compromised**. Every default is fail-closed. Agents must prove identity before acting. Behavioral drift is detected across sessions. And every decision is signed with ML-DSA-65 so the audit trail holds up 15 years from now.
 
 ## How it works
 
 ```
-Claude Code ──► Policy Engine ──► Telegram (operator) ──► Approve / Deny
-                   │                                            │
-                   ├── auto-deny (43 rules)                     │
-                   ├── auto-allow (if configured)               │
-                   └── ask ──────────────────────────────────────┘
-                                                                │
-                                                          Audit Log
-                                       (SHA3-256 chain + ML-DSA-65 + HMAC)
+              ┌─────────────────────────────────────────────────────────────┐
+              │                     Fidelis Gatekeeper                      │
+              │                                                             │
+  Agent ─────►│  Identity ──► Policy ──► Why Layer ──► Telegram ──► Verdict │
+              │  Attestation   Engine     (CoE)         Relay       Allow/  │
+              │                                                     Deny   │
+              │     ▼            ▼          ▼              ▼          ▼     │
+              │  ┌──────────────────────────────────────────────────────┐   │
+              │  │              Quantum Audit Log                      │   │
+              │  │   SHA3-256 chain + ML-DSA-65 sigs + ATT&CK + ID    │   │
+              │  └──────────────────────────────────────────────────────┘   │
+              │                          ▼                                  │
+              │                  Behavioral Baseline                        │
+              │              (per-agent drift detection)                    │
+              └─────────────────────────────────────────────────────────────┘
 ```
 
-When Claude Code requests permission to run a tool:
+When an agent requests permission to use a tool:
 
-1. The **policy engine** evaluates the request against 50 ordered rules
-2. **43 hard-deny rules** block dangerous patterns immediately — filesystem destruction, credential theft, network exfiltration, privilege escalation, reverse shells, and more
-3. **7 ask rules** forward to Telegram for human approval — service lifecycle, git push, destructive SQL, package installs
-4. The operator replies `yes <id>` or `no <id>` in Telegram
-5. If no reply arrives before the timeout, the request is **denied**
-6. Every decision is recorded in an append-only, hash-chained audit log
-
-Fidelis also acts as a **two-way chat bridge**: authorized Telegram messages are forwarded into the Claude Code session, and Claude can reply using the `fidelis_reply` tool.
+1. **Identity attestation** — is the agent registered? Is its credential valid, unexpired, unrevoked? Does it have the required capability?
+2. **Policy engine** — 97 ordered rules evaluated against the request. 89 hard-deny rules block dangerous patterns immediately. 7 ask rules forward to the operator.
+3. **Why Layer** — if triggers fire (deny threshold, high-risk technique, identity anomaly, behavioral drift), a Council of 3 expert agents analyzes the event window and produces a risk assessment.
+4. **Telegram relay** — unresolved requests go to the operator. `yes <id>` or `no <id>`. No reply = denied.
+5. **Audit log** — every decision is recorded with ML-DSA-65 signatures, SHA3-256 hash chaining, MITRE ATT&CK enrichment, and agent identity binding.
+6. **Baseline update** — the decision is ingested into the agent's persistent behavioral profile for longitudinal drift detection.
 
 ## Requirements
 
@@ -34,6 +39,7 @@ Fidelis also acts as a **two-way chat bridge**: authorized Telegram messages are
 - Node.js **>= 20.0.0**
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 - At least one authorized Telegram chat ID
+- Optional: [Ollama](https://ollama.com) for the Why Layer's Council of Experts
 
 > **Note:** Channels are in research preview and require a claude.ai login. Console/API-key auth does not support them. Team and Enterprise orgs must explicitly enable channels. Custom plugins require the `--dangerously-load-development-channels` flag until Anthropic allowlists them through channel review.
 
@@ -45,7 +51,7 @@ Fidelis also acts as a **two-way chat bridge**: authorized Telegram messages are
 claude plugin install fidelis-channel@<marketplace>
 ```
 
-When you enable the plugin, Claude Code prompts for the Telegram bot token, allowed chat IDs, and optional audit HMAC secret through the `userConfig` mechanism.
+Claude Code prompts for the Telegram bot token, allowed chat IDs, and optional HMAC secret through the `userConfig` mechanism.
 
 ### Local development
 
@@ -56,20 +62,9 @@ npm install && npm run build
 claude --plugin-dir ./fidelis-channel
 ```
 
-For channel testing during the research preview:
-
-```bash
-claude --dangerously-load-development-channels plugin:fidelis-channel@<marketplace> \
-       --channels plugin:fidelis-channel@<marketplace>
-```
-
 ## Configuration
 
-Fidelis reads configuration from three sources, in order of priority:
-
-1. **Environment variables** (highest priority)
-2. **Config file** (`config.json` in the data directory)
-3. **Built-in defaults**
+Fidelis reads configuration from environment variables, a config file (`config.json` in the data directory), and built-in defaults — in that priority order.
 
 ### Required
 
@@ -86,30 +81,66 @@ Fidelis reads configuration from three sources, in order of priority:
 | `FIDELIS_HMAC_SECRET` | — | HMAC-SHA256 secret for audit log signing |
 | `FIDELIS_AUDIT_LOG_PATH` | `<data_dir>/audit.jsonl` | Audit log location |
 | `FIDELIS_DATA_DIR` | `${CLAUDE_PLUGIN_DATA}` or `~/.fidelis-channel` | Persistent state directory |
-| `FIDELIS_BRIEFCASE_PATH` | — | Path to a DIB Briefcase for identity-aware consent |
+| `FIDELIS_BRIEFCASE_PATH` | — | Path to a DIB Briefcase for consent-tier enforcement |
 | `FIDELIS_PRIVACY_MODE` | `false` | Force audit field redaction |
 | `FIDELIS_VELOCITY_LIMIT` | `30` | Requests per minute before anomaly flag |
 | `FIDELIS_POLL_INTERVAL_MS` | `1000` | Telegram polling interval |
+| `WHY_ENGINE_MODEL` | `qwen2.5:3b` | Ollama model for Why Layer experts |
+| `WHY_ENGINE_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `WHY_ENGINE_WINDOW_SIZE` | `50` | Max audit entries in assessment window |
+| `WHY_ENGINE_WINDOW_MINUTES` | `30` | Time window for assessment |
+
+## Agent identity
+
+Every agent that passes through the gatekeeper must present a signed identity credential. Credentials use the DID format `did:fidelis:<uuid>` and are signed by the gatekeeper's ML-DSA-65 issuer key.
+
+### Roles and capabilities
+
+| Role | Typical use |
+|---|---|
+| `claude-code` | Primary Claude Code session |
+| `orchestrator` | Multi-agent coordinator (can delegate) |
+| `tool-caller` | Single-purpose tool executor |
+| `observer` | Read-only monitoring agent |
+| `admin` | Operator-level (can register/revoke) |
+
+13 granular capabilities control what each agent can do: `file:read`, `file:write`, `file:delete`, `shell:exec`, `shell:read`, `network:outbound`, `network:inbound`, `process:spawn`, `process:kill`, `credential:read`, `audit:read`, `identity:register`, `identity:revoke`.
+
+### Credential delegation
+
+Orchestrator agents can issue scoped sub-credentials to child agents. Delegation is constrained:
+
+- Child capabilities must be a **strict subset** of the parent's
+- Child TTL is automatically **capped** at the parent's remaining lifetime
+- Maximum delegation depth: **3**
+- Chain signatures (ML-DSA-65) bind root -> parent -> child cryptographically
+- **Cascade revocation** — revoking a parent revokes all descendants
+
+### Bootstrap guard
+
+On first run (empty registry), Fidelis allows requests through unverified so the system is not self-locking. Once the first credential is registered, identity enforcement activates.
 
 ## Policy engine
 
-The default ruleset contains **50 ordered rules** evaluated on every tool request. First match wins.
+The default ruleset contains **97 ordered rules** (89 deny + 7 ask) evaluated on every request. First match wins.
 
-### Hard deny (43 rules, no human override)
+### Hard deny (89 rules, no human override)
 
 | Category | Examples |
 |---|---|
-| Filesystem destruction | `rm -rf`, `mkfs`, `wipefs`, `dd`, block device writes |
+| Filesystem destruction | `rm -rf`, `mkfs`, `wipefs`, `dd`, block device writes, `shred` |
 | Safety bypass flags | `--no-verify`, `--skip-verification`, `--insecure` |
-| Network exfiltration | `curl`, `wget`, `nc`, `scp`, `rsync`, `ngrok`, tunnels |
-| Credential theft | `cat .env`, `.ssh/id_rsa`, `.gnupg` — both Bash and Read tools |
-| Git destructive | `push --force`, `reset --hard`, `clean -fd` |
+| Network exfiltration | `curl`, `wget`, `nc`, `scp`, `rsync`, `ngrok`, tunnels, `/dev/tcp` |
+| Credential theft | `cat .env`, `.ssh/id_rsa`, `/etc/shadow` — both Bash and Read tools |
+| Git destructive | `push --force`, `reset --hard`, `clean -fd`, `checkout -- .` |
 | Privilege escalation | `chmod 777`, SUID/SGID, `chown root` |
 | Firewall teardown | `iptables -F`, `ufw disable`, `nft flush` |
-| Container escape | `--privileged`, `--pid=host`, `--net=host` |
+| Container escape | `--privileged`, `--pid=host`, `docker system prune` |
 | Crypto mining | `xmrig`, `cpuminer`, `minerd` |
 | Shell obfuscation | base64 decode + exec, `eval` + `curl`, reverse shells |
 | Sensitive path writes | Write to `/etc`, `.ssh`, `.bashrc`, `crontab` |
+| Anti-forensics | `history -c`, HISTFILE tampering, journal deletion |
+| Offensive tools | nmap, Metasploit, sqlmap, Hydra, Mimikatz, BloodHound, Cobalt Strike, and 30+ more |
 
 ### Ask (7 rules, forwarded to operator)
 
@@ -123,24 +154,102 @@ The default ruleset contains **50 ordered rules** evaluated on every tool reques
 
 ### Anomaly detection (always-on)
 
-On top of the rule engine, every request is scanned for:
+Every request is scanned for velocity spikes, PII patterns (SSN, email, phone), obfuscation (base64, hex, eval, pipe chains), and data exfiltration indicators. Anomaly flags attach to the audit entry and appear in Telegram prompts.
 
-- **Velocity spikes** — more than 30 requests/minute
-- **PII patterns** — SSN, email, phone numbers
-- **Obfuscation** — base64/hex encoding, `eval`, 3+ pipe chains
-- **Exfiltration** — `curl -d`, `wget --post`, netcat
+## Why Layer (Council of Experts)
 
-Anomaly flags are attached to the audit entry and included in Telegram prompts.
+When triggered, a Council of 3 expert agents analyzes the recent audit window:
 
-## Tools
+| Expert | Focus |
+|---|---|
+| **Anomaly Detector** | Frequency spikes, policy violations, unusual capability usage, baseline deviations |
+| **Intent Inferencer** | Infers agent intent from the action sequence (allowed vs. denied paths) |
+| **Threat Narrator** | Maps behaviors to MITRE ATT&CK tactics, writes an incident brief |
 
-Fidelis exposes three MCP tools to the Claude Code session:
+Experts run in parallel via Ollama (local-first, privacy-preserving). Each produces an independent risk score and signal list. The synthesizer combines them into an overall assessment with a recommended action (allow / monitor / escalate / block).
+
+### Triggers
+
+The Why Layer fires automatically on:
+
+| Trigger | Condition |
+|---|---|
+| `DENY_THRESHOLD` | 3+ denies in the recent window |
+| `HITL_ESCALATION` | Human approve or deny event |
+| `HIGH_RISK_TECHNIQUE` | MITRE tactic is Credential Access, Exfiltration, C2, or Defense Evasion |
+| `IDENTITY_ANOMALY` | Unregistered agent or expired credential |
+| `CASCADE_REVOCATION` | Cascade revoke event |
+| `BASELINE_DRIFT` | Behavioral drift detected against longitudinal baseline |
+| `MANUAL` | Operator invokes `fidelis_why_assess` |
+
+A 30-second cooldown (configurable) prevents over-triggering. If Ollama is unavailable, the Why Layer returns a nominal stub — it never blocks the gatekeeper.
+
+## Behavioral baselines
+
+Each agent accumulates a persistent behavioral profile across sessions. Profiles are stored as JSON files (one per agent, chmod 600) and contain derived statistics only — no raw audit data.
+
+### 8 behavioral dimensions
+
+- **Risk distribution** — min, max, mean, p50, p75, p95, p99, stddev across all sessions
+- **Technique frequencies** — per MITRE technique counts with first/last seen and trend
+- **Capability usage** — per-capability allow/deny/ask counts and deny ratios
+- **Temporal patterns** — hourly and daily activity distributions, session duration stats
+- **Delegation profile** — delegations issued/received, max depth used, cascade revocations
+- **Why Layer history** — last 100 assessments with risk scores and trigger reasons
+- **Thresholds** — auto-calculated from the profile (mean + 2σ upper bound, mean + 3σ critical)
+- **Maturity level** — insufficient (<10 sessions), developing (10-49), established (50-199), mature (200+)
+
+### Drift detection
+
+5 drift dimensions are checked when the Why Layer fires:
+
+| Signal | Fires when |
+|---|---|
+| `RISK_SCORE_ELEVATED` | Current risk exceeds baseline threshold (upper = high, critical = critical) |
+| `NEW_TECHNIQUE_OBSERVED` | MITRE technique not seen in baseline history |
+| `CAPABILITY_DENY_SPIKE` | Deny ratio for a capability is >2x baseline and >50% absolute |
+| `TEMPORAL_ANOMALY` | Activity at an hour with <5% historical share |
+| `VOLUME_SPIKE` | Event count >2x the baseline average per session |
+
+Drift signals are included in the Why Layer assessment, enriched into the audit entry, and surfaced in Telegram alerts.
+
+## MCP tools
+
+Fidelis exposes 13 MCP tools to the Claude Code session:
+
+### Core
 
 | Tool | Description |
 |---|---|
-| `fidelis_reply` | Send a message to the operator. Targets the most recent authorized chat by default. Pass `broadcast=true` to send to all authorized chats, or `chat_id` to target a specific one. HTML is escaped unless `raw_html=true`. |
-| `fidelis_audit_verify` | Verify the audit log's SHA3-256 hash chain, HMAC signatures, and ML-DSA-65 post-quantum signatures. Returns verification stats. |
-| `fidelis_status` | Return a runtime snapshot: Telegram connection state, quantum signing status, policy rule count, audit settings, identity context, and pending verdicts. |
+| `fidelis_reply` | Send a message to the operator via Telegram |
+| `fidelis_audit_verify` | Verify audit log integrity (SHA3-256 chain + HMAC + ML-DSA-65) |
+| `fidelis_status` | Runtime status: Telegram, identity, policy, audit, baselines |
+
+### Identity management
+
+| Tool | Description |
+|---|---|
+| `fidelis_identity_register` | Issue a signed agent credential |
+| `fidelis_identity_verify` | Verify a credential by agentId |
+| `fidelis_identity_list` | List credentials (filter: active, revoked, expired, delegated, all) |
+| `fidelis_identity_revoke` | Revoke a credential |
+
+### Credential delegation
+
+| Tool | Description |
+|---|---|
+| `fidelis_identity_delegate` | Issue a scoped child credential from a parent |
+| `fidelis_identity_cascade_revoke` | Revoke a parent and all its descendants |
+| `fidelis_identity_tree` | View the credential delegation hierarchy |
+
+### Why Layer and baselines
+
+| Tool | Description |
+|---|---|
+| `fidelis_why_assess` | Manually trigger a Council of Experts assessment |
+| `fidelis_baseline_get` | Retrieve the full behavioral profile for an agent |
+| `fidelis_baseline_drift` | Run drift detection against the current audit window |
+| `fidelis_baseline_list` | List baseline profiles with maturity/role filters |
 
 ## Skills
 
@@ -156,59 +265,37 @@ Three slash commands are available inside a Claude Code session:
 
 The audit log is append-only JSONL with three layers of integrity protection:
 
-1. **SHA3-256 hash chaining** — each line contains the hash of the previous line, forming a tamper-evident chain. SHA3-256 is resistant to length-extension attacks and provides quantum-resistant hash integrity.
+1. **SHA3-256 hash chaining** — tamper-evident, quantum-resistant, resistant to length-extension attacks
+2. **ML-DSA-65 post-quantum signatures** (FIPS 204) — non-repudiation holds against harvest-now-decrypt-later adversaries 10-15+ years forward
+3. **HMAC-SHA256 classical signatures** (optional) — backwards compatibility layer
 
-2. **ML-DSA-65 post-quantum signatures** (FIPS 204) — every entry is signed with a per-instance ML-DSA-65 keypair. This ensures non-repudiation holds against harvest-now-decrypt-later adversaries who may challenge the audit trail 10-15+ years in the future.
-
-3. **HMAC-SHA256 classical signatures** (optional) — if `FIDELIS_HMAC_SECRET` is configured, entries are also signed with a classical HMAC for backwards compatibility.
-
-### Structured entry schema
-
-Each audit entry includes:
+### Entry schema
 
 | Field | Description |
 |---|---|
 | `id` | UUID |
 | `timestamp` | ISO 8601 |
-| `event` | Event type (see below) |
+| `event` | Event type |
 | `rule_id` | Matched policy rule pattern |
 | `mitre` | ATT&CK enrichment: `{ id, name, tactic }` |
-| `hash_algorithm` | `"sha3-256"` (absent on legacy entries) |
+| `agentId` | DID of the attested agent |
+| `identityVerified` | Whether the agent's credential was verified |
+| `agentRole` | Agent's declared role |
+| `attestationDenyReason` | Why attestation was denied (if applicable) |
+| `whyTriggered` | Whether the Why Layer fired for this entry |
+| `whyTriggerReason` | The trigger type |
+| `hash_algorithm` | `"sha3-256"` |
 | `prev_hash` | SHA3-256 of previous log line |
 | `hmac` | HMAC-SHA256 signature (if configured) |
 | `pq_signature` | ML-DSA-65 signature, base64-encoded |
 
-### Event types
-
-| Event | Meaning |
-|---|---|
-| `POLICY_DENY` | Blocked by a local policy rule |
-| `POLICY_ALLOW` | Allowed by a local policy rule |
-| `HUMAN_APPROVE` | Operator approved in Telegram |
-| `HUMAN_DENY` | Operator denied in Telegram |
-| `TIMEOUT_DENY` | No response before timeout — denied by default |
-| `ANOMALY_DETECTED` | Anomaly flags raised on the request |
-| `IDENTITY_LOADED` | Briefcase identity context loaded |
-
-The distinction between `HUMAN_DENY` and `TIMEOUT_DENY` matters for auditing whether a denial was an active decision or a fail-closed default.
-
 ### Key management
 
-The ML-DSA-65 signing keypair is auto-generated on first run and stored at `<data_dir>/quantum-keypair.json` (mode 0600). The public key hash is logged in the `SESSION_START` audit entry for key pinning. To verify logs from a different instance, load the public key from the originating keypair file.
+The ML-DSA-65 signing keypair is auto-generated on first run and stored at `<data_dir>/quantum-keypair.json` (mode 0600). The public key hash is logged in `SESSION_START` for key pinning. The same key serves as the credential issuer for agent identity.
 
 ## Identity and Briefcase integration
 
-If `FIDELIS_BRIEFCASE_PATH` points to a [DIB Briefcase](https://github.com/corpussanctum/dib) directory, Fidelis loads a 7-tier consent model:
-
-1. **Public** — name, role, public profile
-2. **Operational** — work context, projects
-3. **Clinical** — treatment context
-4. **Protected** — PHI, PII, diagnosis codes
-5. **Restricted** — trauma, crisis, substance use
-6. **Confidential** — legal, forensic, court records
-7. **Sealed** — special legal protection (42 CFR Part 2)
-
-With a Briefcase loaded, the policy engine enforces consent boundaries — auto-denying tools forbidden at the active consent tier and redacting sensitive fields in audit entries. A sample Briefcase is included in `sample-briefcase/` for reference.
+If `FIDELIS_BRIEFCASE_PATH` points to a [DIB Briefcase](https://github.com/corpussanctum/dib) directory, Fidelis loads a 7-tier consent model (Public through Sealed / 42 CFR Part 2). The policy engine enforces consent boundaries and redacts sensitive fields in audit entries. A sample Briefcase is included in `sample-briefcase/`.
 
 This is an optional hardening layer. Fidelis works fully without it.
 
@@ -216,17 +303,25 @@ This is an optional hardening layer. Fidelis works fully without it.
 
 ```
 src/
-├── index.ts               # MCP server entry point + permission handler
-├── policy-engine.ts       # Rule evaluation, anomaly detection, velocity tracking
-├── audit-log.ts           # Append-only JSONL with SHA3-256 chain + ML-DSA-65 + HMAC
+├── index.ts               # MCP server, 13 tools, permission handler
+├── policy-engine.ts       # 97 rules, anomaly detection, velocity tracking
+├── audit-log.ts           # SHA3-256 chain + ML-DSA-65 + HMAC + identity fields
 ├── quantum-signer.ts      # ML-DSA-65 keypair management, signing, verification
-├── mitre-attack.ts        # ATT&CK technique → name + tactic lookup table
+├── agent-identity.ts      # Credential types, issuance, verification, delegation
+├── identity-registry.ts   # In-memory registry with JSON persistence
+├── attestation.ts         # Identity attestation + audit enrichment
+├── why-engine.ts          # Council of Experts (3 parallel agents via Ollama)
+├── why-triggers.ts        # Auto-trigger logic + Telegram alert formatting
+├── baseline-types.ts      # Behavioral profile types, drift signals, maturity model
+├── baseline-store.ts      # Per-agent JSON file persistence (atomic writes)
+├── baseline-engine.ts     # Profile calculation, drift detection, ingestion
+├── mitre-attack.ts        # ATT&CK technique → name + tactic lookup (65+ entries)
 ├── identity-provider.ts   # DIB Briefcase integration (consent tiers)
 ├── telegram.ts            # Telegram Bot API client (native fetch, long-polling)
-└── config.ts              # Configuration loader + 96 default rules
+└── config.ts              # Configuration loader + 97 default rules
 ```
 
-**Dependencies are minimal by design**: `@modelcontextprotocol/sdk`, `zod`, and `@noble/post-quantum` (pure JS ML-DSA-65, no native bindings). The Telegram client uses Node's native `fetch` — no HTTP library needed.
+**Dependencies**: `@modelcontextprotocol/sdk`, `zod`, `@noble/post-quantum`. No HTTP library — Telegram and Ollama use Node's native `fetch`.
 
 ## Testing
 
@@ -234,14 +329,16 @@ src/
 npm run build && npm test
 ```
 
-The test suite covers all 50 policy rules, audit log integrity verification, Briefcase parsing, consent tier enforcement, anomaly detection, and configuration loading.
+359 tests across 14 test suites covering policy rules, audit integrity, quantum signing, identity lifecycle, credential delegation, attestation flow, Why Layer reasoning, trigger logic, baseline calculation, drift detection, and configuration loading.
 
 ## Limitations
 
 - This is a security tool, not a compliance certification. It does not replace local review of high-risk actions, legal counsel, or organizational security policy.
-- The Telegram relay depends on Telegram's availability. If Telegram is unreachable, all forwarded requests time out and are denied.
-- The policy engine uses glob patterns and string matching, not semantic analysis. A sufficiently creative prompt injection could craft tool arguments that evade pattern-based rules. Defense in depth applies.
-- Briefcase integration is one-directional: Fidelis reads the Briefcase but does not write to it.
+- The Telegram relay depends on Telegram's availability. If Telegram is unreachable, forwarded requests time out and are denied.
+- The policy engine uses glob patterns and string matching, not semantic analysis. Defense in depth applies.
+- The Why Layer requires a running Ollama instance. Without it, the layer returns nominal stubs — it never blocks the gatekeeper.
+- Behavioral baselines need ~10 sessions before drift detection produces meaningful signals (maturity model handles this).
+- Agent secret keys are held in-memory only for delegation support — they do not survive process restarts.
 
 ## License
 
