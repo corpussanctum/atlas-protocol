@@ -20,7 +20,7 @@ import type { AtlasConfig } from "../src/config.js";
 // ---------------------------------------------------------------------------
 
 function getDefaultConfig(): AtlasConfig {
-  // Use the real default config with all 97 rules
+  // Use the real default config with all 96 rules
   const config = loadConfig();
   // Override paths so tests don't touch real data
   config.data_dir = "/tmp/atlas-fixture-test";

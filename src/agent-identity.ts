@@ -351,7 +351,7 @@ export interface DelegationChain {
   rootId: string;              // did:atlas:<uuid> — the original issuer
   parentId: string;            // did:atlas:<uuid> — direct parent
   depth: number;               // 0 = root, 1 = first delegation, max 3
-  chainSignature: string;      // ML-DSA-65 sign of [rootId+parentId+childId]
+  chainSignature: string;      // ML-DSA-65 signature over canonical delegation authority object
 }
 
 export interface DelegatedCredential extends AgentCredential {
@@ -385,6 +385,34 @@ export interface DelegationValidation {
 // ---------------------------------------------------------------------------
 
 const MAX_DELEGATION_DEPTH = 3;
+
+/**
+ * Build a canonical delegation authority object for chain signing.
+ * Binds the actual delegated authority (capabilities, expiry, depth),
+ * not just identities. Prevents substitution/replay attacks.
+ */
+function buildDelegationAuthority(params: {
+  rootId: string;
+  parentId: string;
+  childId: string;
+  capabilities: AgentCapability[];
+  expiresAt: string;
+  depth: number;
+  childCredentialHash: string;
+}): string {
+  return JSON.stringify({
+    protocol: "atlas-protocol",
+    version: CREDENTIAL_VERSION,
+    type: "delegation-authority",
+    rootId: params.rootId,
+    parentId: params.parentId,
+    childId: params.childId,
+    capabilities: [...params.capabilities].sort(),
+    expiresAt: params.expiresAt,
+    depth: params.depth,
+    childCredentialHash: params.childCredentialHash,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Delegation Functions
@@ -498,41 +526,52 @@ export function delegateCredential(
   const childKeyPair = generateAgentKeyPair();
   const childAgentId = ATLAS_DID_PREFIX + randomUUID();
 
-  // Build chain signature: ML-DSA-65 sign of rootId+parentId+childId
-  const chainMessage = rootId + parent.agentId + childAgentId;
-  const chainMessageBytes = new Uint8Array(Buffer.from(chainMessage));
-  const chainSigBytes = _ml_dsa65.sign(parentSecretKey, chainMessageBytes);
-  const chainSignature = Buffer.from(chainSigBytes).toString("base64");
-
-  // Build the partial credential (without issuerSignature / credentialHash)
-  const partial: Omit<AgentCredential, "issuerSignature" | "credentialHash"> & {
-    delegated: true;
-    delegation: DelegationChain;
-  } = {
+  // Build the partial credential with a placeholder chain signature.
+  // We need the credential hash first to bind it in the chain signature.
+  const childKeyPairObj = childKeyPair; // rename for clarity
+  const partialNoDelegation: Omit<AgentCredential, "issuerSignature" | "credentialHash"> = {
     agentId: childAgentId,
     name: request.childName,
     role: request.childRole,
     issuedAt: now.toISOString(),
     expiresAt: childExpiry.toISOString(),
-    publicKey: childKeyPair.publicKey,
+    publicKey: childKeyPairObj.publicKey,
     capabilities: [...request.capabilities],
     version: CREDENTIAL_VERSION,
     revoked: false,
-    delegated: true,
-    delegation: {
-      rootId,
-      parentId: parent.agentId,
-      depth,
-      chainSignature,
-    },
   };
 
-  // Issuer co-signs the canonical payload
-  const canonicalPayload = buildCanonicalPayload(partial);
-  const credentialHash = createHash("sha3-256")
-    .update(canonicalPayload)
-    .digest("hex");
+  // Compute credential hash from the base credential fields
+  const baseCanonical = buildCanonicalPayload(partialNoDelegation);
+  const credentialHash = createHash("sha3-256").update(baseCanonical).digest("hex");
 
+  // Build chain signature over canonical delegation authority (binds actual authority)
+  const authorityPayload = buildDelegationAuthority({
+    rootId,
+    parentId: parent.agentId,
+    childId: childAgentId,
+    capabilities: request.capabilities,
+    expiresAt: childExpiry.toISOString(),
+    depth,
+    childCredentialHash: credentialHash,
+  });
+  const chainMessageBytes = new Uint8Array(Buffer.from(authorityPayload));
+  const chainSigBytes = _ml_dsa65.sign(parentSecretKey, chainMessageBytes);
+  const chainSignature = Buffer.from(chainSigBytes).toString("base64");
+
+  // Assemble the full delegated credential
+  const partial: Omit<AgentCredential, "issuerSignature" | "credentialHash"> & {
+    delegated: true;
+    delegation: DelegationChain;
+  } = {
+    ...partialNoDelegation,
+    delegated: true,
+    delegation: { rootId, parentId: parent.agentId, depth, chainSignature },
+  };
+
+  // Issuer co-signs the full canonical payload (including delegation fields)
+  const canonicalPayload = buildCanonicalPayload(partial);
+  const fullCredentialHash = createHash("sha3-256").update(canonicalPayload).digest("hex");
   const payloadBytes = new Uint8Array(Buffer.from(canonicalPayload));
   const signatureBytes = _ml_dsa65.sign(issuerSecretKey, payloadBytes);
   const issuerSignature = Buffer.from(signatureBytes).toString("base64");
@@ -540,7 +579,7 @@ export function delegateCredential(
   return {
     ...partial,
     issuerSignature,
-    credentialHash,
+    credentialHash: fullCredentialHash,
   };
 }
 
@@ -582,15 +621,8 @@ export function delegateCredentialWithKey(
   const childKeyPair = generateAgentKeyPair();
   const childAgentId = ATLAS_DID_PREFIX + randomUUID();
 
-  const chainMessage = rootId + parent.agentId + childAgentId;
-  const chainMessageBytes = new Uint8Array(Buffer.from(chainMessage));
-  const chainSigBytes = _ml_dsa65.sign(parentSecretKey, chainMessageBytes);
-  const chainSignature = Buffer.from(chainSigBytes).toString("base64");
-
-  const partial: Omit<AgentCredential, "issuerSignature" | "credentialHash"> & {
-    delegated: true;
-    delegation: DelegationChain;
-  } = {
+  // Build base credential fields for hashing
+  const partialNoDelegation: Omit<AgentCredential, "issuerSignature" | "credentialHash"> = {
     agentId: childAgentId,
     name: request.childName,
     role: request.childRole,
@@ -600,6 +632,30 @@ export function delegateCredentialWithKey(
     capabilities: [...request.capabilities],
     version: CREDENTIAL_VERSION,
     revoked: false,
+  };
+
+  const baseCanonical = buildCanonicalPayload(partialNoDelegation);
+  const baseCredentialHash = createHash("sha3-256").update(baseCanonical).digest("hex");
+
+  // Chain signature binds actual delegated authority (capabilities, expiry, depth, credential hash)
+  const authorityPayload = buildDelegationAuthority({
+    rootId,
+    parentId: parent.agentId,
+    childId: childAgentId,
+    capabilities: request.capabilities,
+    expiresAt: childExpiry.toISOString(),
+    depth,
+    childCredentialHash: baseCredentialHash,
+  });
+  const chainMessageBytes = new Uint8Array(Buffer.from(authorityPayload));
+  const chainSigBytes = _ml_dsa65.sign(parentSecretKey, chainMessageBytes);
+  const chainSignature = Buffer.from(chainSigBytes).toString("base64");
+
+  const partial: Omit<AgentCredential, "issuerSignature" | "credentialHash"> & {
+    delegated: true;
+    delegation: DelegationChain;
+  } = {
+    ...partialNoDelegation,
     delegated: true,
     delegation: { rootId, parentId: parent.agentId, depth, chainSignature },
   };
@@ -654,12 +710,22 @@ export function verifyDelegationChain(
     };
   }
 
-  // Reconstruct and verify the chain signature
-  const chainMessage =
-    credential.delegation.rootId +
-    credential.delegation.parentId +
-    credential.agentId;
-  const chainMessageBytes = new Uint8Array(Buffer.from(chainMessage));
+  // Reconstruct the canonical delegation authority and verify chain signature
+  // Build base credential hash (without delegation fields) for authority binding
+  const { issuerSignature: _is, credentialHash: _ch, delegated: _d, delegation: _del, ...baseFields } = credential;
+  const baseCanonical = buildCanonicalPayload(baseFields);
+  const baseHash = createHash("sha3-256").update(baseCanonical).digest("hex");
+
+  const authorityPayload = buildDelegationAuthority({
+    rootId: credential.delegation.rootId,
+    parentId: credential.delegation.parentId,
+    childId: credential.agentId,
+    capabilities: credential.capabilities,
+    expiresAt: credential.expiresAt,
+    depth: credential.delegation.depth,
+    childCredentialHash: baseHash,
+  });
+  const chainMessageBytes = new Uint8Array(Buffer.from(authorityPayload));
   const chainSigBytes = new Uint8Array(
     Buffer.from(credential.delegation.chainSignature, "base64")
   );

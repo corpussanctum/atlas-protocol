@@ -2,7 +2,7 @@
  * Atlas Protocol — Policy Test Runner (v0.8.0)
  *
  * Runtime policy regression testing. Used by the atlas_test_policy MCP tool
- * to validate all 97 rules against known malicious/benign fixtures without
+ * to validate all 96 rules against known malicious/benign fixtures without
  * requiring a full test harness.
  */
 

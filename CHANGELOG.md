@@ -2,6 +2,58 @@
 
 All notable changes to Atlas Protocol are documented in this file.
 
+## [0.8.2] - 2026-03-29
+
+### Added
+- **Issuer key discovery** in SPEC.md §4.5 — normative mechanism for third-party verifiers
+  to discover the trusted issuer public key (local pinning RECOMMENDED, SESSION_START
+  extraction as fallback, well-known URI placeholder for future)
+- **Evidence citation requirements** in SPEC.md §7.4 — expert signals MUST reference
+  specific audit entry IDs; `ungroundedSignals` flag added to `ExpertAssessment` type
+  - Expert prompts updated to explicitly require entry ID citations
+  - Post-processing detects signals that lack grounded references to known entry IDs
+  - Fallback assessments marked `ungroundedSignals: true` by default
+- **Research artifact integrity labeling** — `ResearchArtifact` now includes:
+  - `derivedFrom`: SHA3-256 hash of the audit event window (entry IDs)
+  - `generatedBy`: model identifier from provenance
+  - `assessedAt`: ISO 8601 generation timestamp
+  - `caution`: fixed string "AI-generated analysis. Verify against primary audit trail."
+- **SPEC.md §7.5** — normative requirements for research artifact integrity fields
+
+### Fixed
+- Research conformance profile bootstrap requirement upgraded from MAY to MUST (consistency
+  with production profile — research deployments collecting data must have bootstrap integrity)
+
+## [0.8.1] - 2026-03-29
+
+### Added
+- **SPEC.md** — normative protocol specification, cleanly separated from reference implementation
+  - Conformance profiles: Development, Production, Research with MUST/SHOULD precision
+  - Complete `did:atlas` method spec: syntax, CRUD, resolution, error states, deactivation
+  - Key rotation procedure (specified for forward compatibility)
+  - Anti-truncation requirements (sequence numbers + checkpoints)
+  - Model provenance requirements for Why Layer assessments
+  - DIB Briefcase framed as optional extension, not bolted-on afterthought
+- **Audit anti-truncation** — monotonic sequence numbers (`seq` field) on every entry
+  - Verifier detects sequence gaps (silent truncation defense)
+  - Periodic `CHECKPOINT` entries with running entry count and hash anchor
+  - Configurable interval via `ATLAS_CHECKPOINT_INTERVAL` (default: every 100 entries)
+- **Model provenance** in Why Layer assessments
+  - `ModelProvenance` type: model name, model digest from Ollama, system prompt hash, runtime version
+  - Fetches model digest and Ollama version at assessment time (best-effort, never blocks)
+  - System prompt hash precomputed at startup for reproducibility tracking
+
+### Changed
+- **Delegation chain signature** now binds actual delegated authority, not just identities
+  - Signed payload is a canonical JSON object containing: childId, parentId, rootId, capabilities, expiresAt, depth, protocol version, and child credential hash
+  - Prevents substitution attacks where a chain signature is replayed with different capabilities or expiry
+  - Verification reconstructs the canonical authority and checks against parent's public key
+- **Audit verifier** now checks sequence number continuity alongside hash chain continuity
+  - Reports `max_seq` and `checkpoints` count in verification stats
+
+### Fixed
+- **Rule count arithmetic**: README and docs claimed 97 rules but actual count is 96 (89 deny + 7 ask). Fixed all references.
+
 ## [0.8.0] - 2026-03-29
 
 ### Added

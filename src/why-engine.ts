@@ -41,8 +41,11 @@ export interface ExpertAssessment {
   expert: "anomaly" | "intent" | "threat";
   finding: string;
   confidence: "high" | "medium" | "low";
+  /** Each signal SHOULD reference a specific audit entry ID (e.g., "T1059 match on entry <uuid>") */
   signals: string[];
   riskScore: number;
+  /** True if any signal lacks a grounded reference to a specific audit entry */
+  ungroundedSignals?: boolean;
 }
 
 export interface ResearchArtifact {
@@ -63,6 +66,28 @@ export interface ResearchArtifact {
     baselineMean: number;
     deviationFactor: number;
   };
+  // Integrity labeling (v0.8.2+)
+  /** SHA3-256 hash of the serialized AuditEventWindow input */
+  derivedFrom?: string;
+  /** Model identifier that generated this artifact */
+  generatedBy?: string;
+  /** ISO 8601 timestamp of artifact generation */
+  assessedAt?: string;
+  /** Fixed caution label for downstream consumers */
+  caution?: string;
+}
+
+export interface ModelProvenance {
+  /** Model name/tag used for inference */
+  model: string;
+  /** Model digest/hash from Ollama (if available) */
+  modelDigest?: string;
+  /** SHA-256 hash of the system prompts used */
+  systemPromptHash: string;
+  /** Ollama server version (if available) */
+  ollamaVersion?: string;
+  /** Protocol version used for assessment */
+  protocolVersion: string;
 }
 
 export interface WhyAssessment {
@@ -77,6 +102,8 @@ export interface WhyAssessment {
   threatNarrative: string;
   generatedAt: string;
   modelUsed: string;
+  /** Model provenance and reproducibility metadata (v0.8.1+) */
+  provenance?: ModelProvenance;
   researchArtifact: ResearchArtifact;
 }
 
@@ -85,19 +112,73 @@ export interface WhyAssessment {
 // ---------------------------------------------------------------------------
 
 const ANOMALY_PROMPT =
-  "You are a security anomaly detector analyzing AI agent behavior logs. Review the provided audit events and identify any unusual patterns. Consider: frequency spikes, policy violations clustering, unexpected capability usage, deviation from baseline behavior. Respond ONLY with valid JSON: { \"finding\": \"...\", \"confidence\": \"high|medium|low\", \"signals\": [...], \"riskScore\": 0-100 }. Be specific. Cite event IDs or timestamps when relevant.";
+  "You are a security anomaly detector analyzing AI agent behavior logs. Review the provided audit events and identify any unusual patterns. Consider: frequency spikes, policy violations clustering, unexpected capability usage, deviation from baseline behavior. Respond ONLY with valid JSON: { \"finding\": \"...\", \"confidence\": \"high|medium|low\", \"signals\": [...], \"riskScore\": 0-100 }. IMPORTANT: Each signal string MUST cite a specific audit entry ID from the provided events (e.g., \"Velocity spike: 5 requests in 10s starting at entry abc12345\"). Signals without entry ID references are considered ungrounded.";
 
 const INTENT_PROMPT =
-  "You are an AI behavioral analyst. Review these audit events and infer what this agent is trying to accomplish across the session. Consider the sequence of actions, what was allowed vs denied, and what the overall trajectory suggests about agent intent. Respond ONLY with valid JSON: { \"finding\": \"...\", \"confidence\": \"high|medium|low\", \"signals\": [...], \"riskScore\": 0-100 }. Describe intent in one clear sentence in the finding field.";
+  "You are an AI behavioral analyst. Review these audit events and infer what this agent is trying to accomplish across the session. Consider the sequence of actions, what was allowed vs denied, and what the overall trajectory suggests about agent intent. Respond ONLY with valid JSON: { \"finding\": \"...\", \"confidence\": \"high|medium|low\", \"signals\": [...], \"riskScore\": 0-100 }. IMPORTANT: Each signal string MUST reference specific audit entry IDs that support the inference (e.g., \"Sequential file reads entry abc123, def456 suggest codebase exploration\"). Describe intent in one clear sentence in the finding field.";
 
 const THREAT_PROMPT =
-  "You are a SOC analyst writing an incident brief. Review these audit events and describe what is happening in plain language a security team would understand. Map observed behaviors to MITRE ATT&CK tactics where relevant. Respond ONLY with valid JSON: { \"finding\": \"...\", \"confidence\": \"high|medium|low\", \"signals\": [...], \"riskScore\": 0-100 }. Write as if briefing a senior analyst who will decide whether to escalate.";
+  "You are a SOC analyst writing an incident brief. Review these audit events and describe what is happening in plain language a security team would understand. Map observed behaviors to MITRE ATT&CK tactics where relevant. Respond ONLY with valid JSON: { \"finding\": \"...\", \"confidence\": \"high|medium|low\", \"signals\": [...], \"riskScore\": 0-100 }. IMPORTANT: Each signal MUST cite the specific audit entry ID(s) that evidence the behavior (e.g., \"T1059.004 shell execution in entry abc12345\"). Write as if briefing a senior analyst who will decide whether to escalate.";
 
 const EXPERT_PROMPTS: Record<"anomaly" | "intent" | "threat", string> = {
   anomaly: ANOMALY_PROMPT,
   intent: INTENT_PROMPT,
   threat: THREAT_PROMPT,
 };
+
+// Precomputed SHA-256 hash of the system prompts for provenance tracking
+import { createHash } from "node:crypto";
+const SYSTEM_PROMPT_HASH = createHash("sha256")
+  .update(ANOMALY_PROMPT + INTENT_PROMPT + THREAT_PROMPT)
+  .digest("hex");
+
+const PROTOCOL_VERSION = "0.8.1";
+
+/**
+ * Fetch model provenance from Ollama API (best-effort, never throws).
+ */
+async function fetchModelProvenance(cfg: WhyEngineConfig): Promise<ModelProvenance> {
+  const provenance: ModelProvenance = {
+    model: cfg.model,
+    systemPromptHash: SYSTEM_PROMPT_HASH,
+    protocolVersion: PROTOCOL_VERSION,
+  };
+
+  try {
+    // Fetch model digest
+    const showRes = await fetch(`${cfg.baseUrl}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: cfg.model }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (showRes.ok) {
+      const showData = await showRes.json() as { digest?: string; model_info?: Record<string, unknown> };
+      if (showData.digest) {
+        provenance.modelDigest = showData.digest;
+      }
+    }
+  } catch {
+    // Best-effort — provenance without digest is still useful
+  }
+
+  try {
+    // Fetch Ollama version
+    const versionRes = await fetch(`${cfg.baseUrl}/api/version`, {
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (versionRes.ok) {
+      const versionData = await versionRes.json() as { version?: string };
+      if (versionData.version) {
+        provenance.ollamaVersion = versionData.version;
+      }
+    }
+  } catch {
+    // Best-effort
+  }
+
+  return provenance;
+}
 
 // ---------------------------------------------------------------------------
 // Config loader
@@ -207,14 +288,25 @@ export async function runExpert(
       Math.min(100, Math.round(parsed.riskScore ?? 25)),
     );
 
+    const signals = Array.isArray(parsed.signals)
+      ? parsed.signals.filter((s): s is string => typeof s === "string")
+      : [];
+
+    // Check if any signal lacks a grounded audit entry ID reference
+    // Entry IDs are UUIDs — look for hex patterns of length >= 8
+    const entryIds = new Set(entries.map((e) => e.id));
+    const hasUngrounded = signals.length > 0 && signals.some((s) => {
+      // Check if the signal references any known entry ID (full or partial 8+ char prefix)
+      return !Array.from(entryIds).some((id) => s.includes(id) || s.includes(id.slice(0, 8)));
+    });
+
     return {
       expert,
       finding: typeof parsed.finding === "string" ? parsed.finding : "No finding",
       confidence,
-      signals: Array.isArray(parsed.signals)
-        ? parsed.signals.filter((s): s is string => typeof s === "string")
-        : [],
+      signals,
       riskScore,
+      ungroundedSignals: hasUngrounded || undefined,
     };
   } catch {
     return fallbackAssessment(expert);
@@ -230,6 +322,7 @@ function fallbackAssessment(
     confidence: "low",
     signals: [],
     riskScore: 25,
+    ungroundedSignals: true,
   };
 }
 
@@ -244,7 +337,10 @@ function validateConfidence(
 // Research artifact builder
 // ---------------------------------------------------------------------------
 
-export function buildResearchArtifact(entries: AuditEntry[]): ResearchArtifact {
+export function buildResearchArtifact(
+  entries: AuditEntry[],
+  modelUsed?: string,
+): ResearchArtifact {
   const uniqueAgents = [
     ...new Set(
       entries.map((e) => e.agentId).filter((id): id is string => id != null),
@@ -279,6 +375,10 @@ export function buildResearchArtifact(entries: AuditEntry[]): ResearchArtifact {
 
   const temporalPattern = classifyTemporalPattern(entries, riskProgression);
 
+  // Integrity labeling — compute window hash for provenance
+  const windowPayload = JSON.stringify(entries.map((e) => e.id));
+  const derivedFrom = createHash("sha3-256").update(windowPayload).digest("hex");
+
   return {
     eventCount: entries.length,
     uniqueAgents,
@@ -287,6 +387,10 @@ export function buildResearchArtifact(entries: AuditEntry[]): ResearchArtifact {
     riskProgression,
     anomalySignals,
     temporalPattern,
+    derivedFrom,
+    generatedBy: modelUsed,
+    assessedAt: new Date().toISOString(),
+    caution: "AI-generated analysis. Verify against primary audit trail.",
   };
 }
 
@@ -340,6 +444,7 @@ export function synthesize(
   entries: AuditEntry[],
   driftAssessment?: DriftAssessment,
   baseline?: BaselineProfile,
+  modelUsed?: string,
 ): Omit<WhyAssessment, "expertAssessments"> {
   const anomalyExpert = experts.find((e) => e.expert === "anomaly");
   const intentExpert = experts.find((e) => e.expert === "intent");
@@ -398,7 +503,7 @@ export function synthesize(
   }
   const windowSummary = `${entries.length} events over ${timeSpanMinutes} minutes`;
 
-  const researchArtifact = buildResearchArtifact(entries);
+  const researchArtifact = buildResearchArtifact(entries, modelUsed);
 
   // Enrich with baseline longitudinal data (v0.7.0)
   if (baseline && baseline.maturityLevel !== "insufficient") {
@@ -544,11 +649,15 @@ export async function assessWindow(
       drift = detectDrift(window.entries, anomalyExpert, baseline);
     }
 
-    const base = synthesize(assessments, window.entries, drift, baseline);
+    // Fetch model provenance (best-effort, non-blocking)
+    const provenance = await fetchModelProvenance(cfg);
+
+    const base = synthesize(assessments, window.entries, drift, baseline, cfg.model);
     return {
       ...base,
       expertAssessments: assessments,
       modelUsed: cfg.model,
+      provenance,
     };
   } catch {
     return stubAssessment(

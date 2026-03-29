@@ -43,7 +43,8 @@ export type AuditEventType =
   | "CONFIG_LOADED"
   | "IDENTITY_LOADED"
   | "CREDENTIAL_EXPIRED"
-  | "CREDENTIAL_EXPIRY_WARNING";
+  | "CREDENTIAL_EXPIRY_WARNING"
+  | "CHECKPOINT";
 
 export interface AuditEntry {
   id: string;
@@ -77,6 +78,10 @@ export interface AuditEntry {
   whyTriggered?: boolean;
   /** The trigger reason (DENY_THRESHOLD, HIGH_RISK_TECHNIQUE, etc.) */
   whyTriggerReason?: string;
+
+  // -- Anti-truncation (v0.8.1+) ---------------------------------------------
+  /** Monotonic sequence number (0-indexed, contiguous within a log file) */
+  seq?: number;
 
   /** Hash algorithm used for prev_hash (absent on legacy SHA-256 entries) */
   hash_algorithm?: "sha3-256";
@@ -121,6 +126,12 @@ export class AuditLogger {
   private readonly signer: QuantumSigner | null;
   private prevHash: string;
   private redaction: RedactionConfig;
+  /** Monotonic sequence counter — anti-truncation measure */
+  private seq: number;
+  /** Entries since last checkpoint */
+  private entriesSinceCheckpoint: number;
+  /** Checkpoint interval (number of entries between checkpoints) */
+  private readonly checkpointInterval: number;
 
   constructor(
     config: AtlasConfig,
@@ -130,6 +141,8 @@ export class AuditLogger {
     this.logPath = config.audit_log_path;
     this.hmacSecret = config.audit_hmac_secret;
     this.signer = signer ?? null;
+    this.checkpointInterval = parseInt(process.env.ATLAS_CHECKPOINT_INTERVAL ?? "100", 10);
+    this.entriesSinceCheckpoint = 0;
 
     // Redaction: merge forced privacy mode with identity-driven config
     const forcePrivacy = process.env.ATLAS_PRIVACY_MODE === "true";
@@ -143,7 +156,9 @@ export class AuditLogger {
       mkdirSync(dir, { recursive: true });
     }
 
-    this.prevHash = this.getLastHash();
+    const { hash, seq } = this.getLastHashAndSeq();
+    this.prevHash = hash;
+    this.seq = seq;
   }
 
   /**
@@ -154,21 +169,28 @@ export class AuditLogger {
   }
 
   /**
-   * Read the last line of the audit log and compute its hash.
+   * Read the last line of the audit log and return its hash and sequence number.
    * Uses SHA3-256 for the chain going forward.
    */
-  private getLastHash(): string {
+  private getLastHashAndSeq(): { hash: string; seq: number } {
     if (!existsSync(this.logPath)) {
-      return "GENESIS";
+      return { hash: "GENESIS", seq: 0 };
     }
     try {
       const content = readFileSync(this.logPath, "utf-8").trim();
-      if (!content) return "GENESIS";
+      if (!content) return { hash: "GENESIS", seq: 0 };
       const lines = content.split("\n");
       const lastLine = lines[lines.length - 1];
-      return sha3_256(lastLine);
+      const hash = sha3_256(lastLine);
+      // Try to read seq from the last entry
+      try {
+        const lastEntry = JSON.parse(lastLine) as AuditEntry;
+        return { hash, seq: (lastEntry.seq ?? lines.length - 1) + 1 };
+      } catch {
+        return { hash, seq: lines.length };
+      }
     } catch {
-      return "GENESIS";
+      return { hash: "GENESIS", seq: 0 };
     }
   }
 
@@ -189,6 +211,7 @@ export class AuditLogger {
       id: randomUUID(),
       timestamp: new Date().toISOString(),
       event,
+      seq: this.seq++,
       hash_algorithm: "sha3-256",
       prev_hash: this.prevHash,
       ...options,
@@ -238,6 +261,21 @@ export class AuditLogger {
     // Update chain hash (SHA3-256)
     this.prevHash = sha3_256(line);
 
+    // Auto-emit checkpoint if interval reached (non-recursive: checkpoints don't trigger more checkpoints)
+    if (event !== "CHECKPOINT") {
+      this.entriesSinceCheckpoint++;
+      if (this.checkpointInterval > 0 && this.entriesSinceCheckpoint >= this.checkpointInterval) {
+        this.entriesSinceCheckpoint = 0;
+        this.log("CHECKPOINT", {
+          meta: {
+            checkpoint_seq: entry.seq,
+            checkpoint_hash: this.prevHash,
+            entries_since_start: this.seq,
+          },
+        });
+      }
+    }
+
     return entry;
   }
 
@@ -269,8 +307,9 @@ export class AuditLogger {
    *
    * Checks:
    *   1. Hash chain continuity (SHA3-256 for v0.4.0+, SHA-256 for legacy)
-   *   2. HMAC signatures (if secret configured)
-   *   3. ML-DSA-65 signatures (if signer available)
+   *   2. Sequence number continuity (anti-truncation)
+   *   3. HMAC signatures (if secret configured)
+   *   4. ML-DSA-65 signatures (if signer available)
    */
   verify(): {
     valid: boolean;
@@ -280,6 +319,8 @@ export class AuditLogger {
       pq_signed: number;
       hmac_signed: number;
       legacy_sha256: number;
+      checkpoints: number;
+      max_seq: number;
     };
   } {
     const errors: string[] = [];
@@ -288,6 +329,8 @@ export class AuditLogger {
       pq_signed: 0,
       hmac_signed: 0,
       legacy_sha256: 0,
+      checkpoints: 0,
+      max_seq: -1,
     };
 
     if (!existsSync(this.logPath)) {
@@ -308,6 +351,19 @@ export class AuditLogger {
         // Determine if this is a legacy (SHA-256) or modern (SHA3-256) entry
         const isLegacy = !entry.hash_algorithm;
         if (isLegacy) stats.legacy_sha256++;
+
+        // Track checkpoints
+        if (entry.event === "CHECKPOINT") stats.checkpoints++;
+
+        // Verify sequence continuity (anti-truncation)
+        if (entry.seq !== undefined) {
+          if (stats.max_seq >= 0 && entry.seq !== stats.max_seq + 1) {
+            errors.push(
+              `Line ${i + 1}: sequence gap — expected seq ${stats.max_seq + 1}, got ${entry.seq}`
+            );
+          }
+          stats.max_seq = entry.seq;
+        }
 
         // Verify hash chain
         if (entry.prev_hash !== expectedPrevHash) {
