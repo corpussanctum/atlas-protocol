@@ -2,7 +2,7 @@
 
 A Claude Code plugin that gates autonomous agent sessions with identity attestation, behavioral baselines, and a post-quantum audit trail — all relayed through Telegram for operator oversight.
 
-Atlas is designed around a single assumption: **the agent might be compromised**. Every default is fail-closed. Agents must prove identity before acting. Behavioral drift is detected across sessions. And every decision is signed with ML-DSA-65 so the audit trail holds up 15 years from now.
+Atlas is designed around a single assumption: **the agent might be compromised**. Every default is fail-closed. Agents must prove identity before acting. Behavioral drift is detected across sessions. Every decision is signed with ML-DSA-65, designed for post-quantum resistance against harvest-now-decrypt-later threats under the protocol's cryptographic assumptions (see [SPEC.md Appendix H](SPEC.md#appendix-h-security-limitations) for what Atlas does and does not guarantee).
 
 > **Spec vs Implementation:** This README documents the reference implementation. For the normative protocol specification (conformance profiles, MUST/SHOULD requirements, DID method, delegation signing semantics), see **[SPEC.md](SPEC.md)**.
 
@@ -349,7 +349,7 @@ Three slash commands are available inside a Claude Code session:
 The audit log is append-only JSONL with three layers of integrity protection:
 
 1. **SHA3-256 hash chaining** — tamper-evident, quantum-resistant, resistant to length-extension attacks
-2. **ML-DSA-65 post-quantum signatures** (FIPS 204) — non-repudiation holds against harvest-now-decrypt-later adversaries 10-15+ years forward
+2. **ML-DSA-65 post-quantum signatures** (FIPS 204) — designed for post-quantum resistance against harvest-now-decrypt-later adversaries
 3. **HMAC-SHA256 classical signatures** (optional) — backwards compatibility layer
 
 ### Rotation

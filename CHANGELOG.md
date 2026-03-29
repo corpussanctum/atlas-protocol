@@ -2,6 +2,53 @@
 
 All notable changes to Atlas Protocol are documented in this file.
 
+## [0.8.4] - 2026-03-29
+
+### Added (SPEC.md — adoption and clarity)
+- **Appendix F: Canonical worked examples** — 7 complete examples: root credential, delegated
+  credential, delegation authority payload, audit entry, checkpoint, rotation manifest, redacted
+  permission object. Sufficient to build a verifier from examples + normative rules.
+- **Appendix G: Conformance test vectors** — fixed hash values for: credential hash, audit
+  prev_hash, delegation authority hash, redacted field HMAC, rotation bridge. Generated from
+  `scripts/gen-test-vectors.mjs`. Enables interop testing without reading source code.
+- **Appendix H: Security limitations** — explicit enumeration of what Atlas does not solve:
+  host compromise, malicious operator, compromised runtime, bad rulesets, LLM semantic gaps,
+  relay compromise, low-entropy redaction, replay/rollback, key compromise, multi-party trust.
+- **Appendix I: Terminology** — 15 standardized term definitions (ask, deny, allow, attestation,
+  verified identity, local DID, checkpoint, archive, anchor, mature baseline, sensitive path,
+  grounded signal, operator, seq).
+- **Appendix J: Verifier pseudocode** — 5 verification procedures: credential, delegated
+  credential, audit chain, archive bridge, checkpoint continuity.
+- **RELEASE_CHECKLIST.md** — per-release drift verification questions covering spec/implementation
+  sync, code quality, version bump, security, and documentation.
+- **scripts/gen-test-vectors.mjs** — generates conformance test vector hashes from known inputs.
+
+### Changed
+- **README**: Replaced "holds up 15 years" language with precise cryptographic claims referencing
+  SPEC.md Appendix H security limitations.
+
+## [0.8.3] - 2026-03-29
+
+### Changed (SPEC.md — normative precision hardening)
+- **§6.2.1 Sequence number semantics** — seq is global monotonic (no reset on rotation),
+  exact failure modes for gaps/duplicates/missing, concurrency rule (single writer only)
+- **§6.5 Rotation** — manifest now requires `final_seq`/`next_seq` fields, exact first-entry-
+  after-rotation behavior, cross-archive verification procedure (5 steps), manifest failure modes
+- **§3.3.1 Policy rule grammar** — formal wildcard syntax (`*` only, no regex), escaping rules,
+  case-insensitivity, tool vs input matching, ordering guarantee, portability requirement
+- **§4.5 Key rotation** — `KEY_ROTATION` audit event schema with exact fields (old/new key hash,
+  effective timestamp, reissue count/success), historical verification expectations
+- **§4.6 Bootstrap guard** — exact "registry empty" definition, first-credential constraints,
+  confirmation code entropy/timeout/replay/max-attempts requirements
+- **§10 Quiet mode** — 6 explicit invariants (never bypasses deny, not an alternate policy engine,
+  sensitivity before eligibility, any flag/uncertainty kills eligibility), evaluation order specified
+- **§7.4 Evidence citation** — grounding definition (8+ char UUID prefix match), minimum evidence
+  count per expert type, mandatory confidence downgrade when `ungroundedSignals: true`
+- **§11 Forward compatibility** — unknown field handling for runtime objects vs signed payloads,
+  `extensions` namespace convention, version authority rules, compatibility matrix
+- **Appendix E** — normative error code enums: attestation (4 codes), delegation (6), audit
+  verification (9), break-glass (6), extensibility convention (`X_` prefix)
+
 ## [0.8.2] - 2026-03-29
 
 ### Added
