@@ -13,7 +13,7 @@ npm test  # 614 tests should pass
 
 ## Contributing Policy Rules
 
-The policy engine is the most accessible contribution surface. Atlas ships with 96 rules (89 deny, 7 ask) in `src/config.ts`. Adding a new rule is straightforward.
+The policy engine is the most accessible contribution surface. Atlas ships with 97 rules (90 deny, 7 ask) in `src/config.ts`. Adding a new rule is straightforward.
 
 ### Rule structure
 

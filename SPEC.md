@@ -649,14 +649,15 @@ Fields under `extensions` MUST be ignored by implementations that do not recogni
 
 ### 11.2 Version negotiation
 
-Atlas uses two distinct version identifiers:
+Atlas uses three distinct version identifiers:
 
 | Identifier | Current value | Meaning | Where it appears |
 |---|---|---|---|
+| **Spec document version** | `"1.0.0"` | The version of this specification document. Changes with each published revision of the spec. | Header of this document, `package.json` |
 | **Credential schema version** | `"0.5.0"` | Structure of `AgentCredential` objects. Changes when fields are added/removed from the credential type. | Credential `version` field |
-| **Protocol version** | `"0.8.4"` | The overall spec version governing pipeline behavior, audit format, delegation semantics, and conformance requirements. | `SESSION_START` → `meta.version`, delegation authority → `version`, `ModelProvenance.protocolVersion` |
+| **Protocol version** | `"0.8.4"` | The wire-format protocol version governing pipeline behavior, audit format, delegation semantics, and conformance requirements. Incremented as protocol behavior changes, independent of the spec document version. | `SESSION_START` → `meta.version`, delegation authority → `version`, `ModelProvenance.protocolVersion` |
 
-These are independent. A gatekeeper at protocol version 0.8.4 may issue credentials with schema version 0.5.0. The credential schema version changes only when the credential structure changes — it has not changed since v0.5.0.
+These are independent. A gatekeeper at protocol version 0.8.4 may issue credentials with schema version 0.5.0. The credential schema version changes only when the credential structure changes — it has not changed since v0.5.0. The spec document version tracks editorial revisions and may advance without changing either wire-format version.
 
 **Version authority rules:**
 
@@ -1140,7 +1141,7 @@ Atlas Protocol improves auditability and operator oversight for autonomous AI ag
 | **Host compromise** | Atlas cannot protect against a compromised host. If an attacker has root access, they can read signing keys, forge audit entries, and bypass all controls. | Mitigate with host hardening, HSM key storage (future), and external audit anchoring. |
 | **Malicious local operator** | Atlas trusts the operator. A malicious operator can approve any request, forge break-glass tokens, and suppress alerts. | Atlas is operator-oversight, not operator-proof. Separation of duties requires organizational controls. |
 | **Compromised inference runtime** | If the Ollama instance (or equivalent) is compromised, the Why Layer produces unreliable assessments. | The Why Layer is non-gating by design. It informs but does not decide. Compromised assessments affect narration quality, not permission decisions. |
-| **Bad rulesets** | The policy engine enforces rules as written. A misconfigured ruleset with missing deny patterns allows dangerous commands through. | Use `atlas_test_policy` regression testing after every rule change. The reference ruleset covers 96 rules across 13 attack categories. |
+| **Bad rulesets** | The policy engine enforces rules as written. A misconfigured ruleset with missing deny patterns allows dangerous commands through. | Use `atlas_test_policy` regression testing after every rule change. The reference ruleset covers 97 rules across 13 attack categories. |
 | **LLM semantic misunderstanding** | The policy engine uses glob patterns, not semantic analysis. An agent can potentially circumvent string-matching rules via indirect tool invocations or aliasing. | Defense in depth: anomaly detection, behavioral baselines, and Why Layer intent inference supplement pattern matching. |
 | **Relay transport compromise** | If the Telegram bot token (or equivalent) is stolen, an attacker can approve requests and suppress denials. | Rotate bot tokens, restrict chat IDs, use two-channel confirmation for bootstrap and break-glass. |
 | **Low-entropy redaction** | Bare SHA-256 over low-entropy values (SSN, phone) is trivially reversible via brute force. | Atlas requires HMAC-SHA256 with a secret key for redaction (§6.7). Implementations MUST NOT use bare SHA-256 for low-entropy fields. |
