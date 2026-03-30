@@ -1,7 +1,11 @@
 /**
  * Atlas Protocol — Raspberry Pi UWB + BLE Adapter
  *
- * Production Linux driver for:
+ * STATUS: UNTESTED REFERENCE DRIVER — structured against datasheet specs
+ * but never validated against real hardware. Do not assume production
+ * readiness without physical testing.
+ *
+ * Reference Linux driver for:
  *   - Reyax RYUW122 UWB module (UART, ~$15)
  *   - Qorvo DWM3000 UWB module (SPI, ~$25)
  *   - Built-in or USB BLE adapter (hci0)

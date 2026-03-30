@@ -1,12 +1,17 @@
 /**
  * Atlas Protocol — ESP32 UWB UART Adapter
  *
+ * STATUS: UNTESTED REFERENCE DRIVER — structured against datasheet specs
+ * but never validated against real hardware. Do not assume production
+ * readiness without physical testing. The companion bridge firmware
+ * (see examples/hardware/esp32-uwb-bridge/ README) has not been built.
+ *
  * Adapter for ESP32-based UWB boards connected via USB serial:
  *   - Makerfabs ESP32 UWB (DW3000, ~$30)
  *   - Ai-Thinker BW16-Kit (DW1000, ~$20)
  *
- * The ESP32 runs a thin bridge firmware (examples/hardware/esp32-uwb-bridge.ino)
- * that exposes a simple JSON-over-UART protocol:
+ * The ESP32 runs a thin bridge firmware that exposes a simple
+ * JSON-over-UART protocol:
  *
  *   Host → ESP32: {"cmd":"range","peer":"<id>","challenge":"<hex>","sts":true}
  *   ESP32 → Host: {"dist":3.21,"quality":92,"sts_ok":true,"rounds":3}

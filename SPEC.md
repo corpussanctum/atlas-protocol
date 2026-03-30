@@ -1,9 +1,9 @@
 # Atlas Protocol Specification
 
 **Version:** 1.0.0
-**Status:** Release Candidate
+**Status:** Published
 **Authors:** TJ Lane (Corpus Sanctum)
-**Last updated:** 2026-03-29
+**Last updated:** 2026-03-30
 
 This document defines the normative requirements for Atlas Protocol. It separates **what a conformant implementation MUST do** from **how the reference implementation happens to do it**. The reference implementation (this repository) uses Telegram, Ollama, and MCP as its transport and runtime, but those are binding choices of this implementation, not of the protocol.
 

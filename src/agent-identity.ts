@@ -126,8 +126,9 @@ export async function initAgentIdentity(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 const ATLAS_DID_PREFIX = "did:atlas:";
+import { PROTOCOL_VERSION } from "./protocol-version.js";
+
 const CREDENTIAL_VERSION = "0.5.0";
-const PROTOCOL_VERSION = "0.8.4";
 const DEFAULT_TTL_HOURS = 24;
 
 // ---------------------------------------------------------------------------

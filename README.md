@@ -523,6 +523,7 @@ cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 - Behavioral baselines need ~10 sessions before drift detection produces meaningful signals (maturity model handles this).
 - Agent secret keys are held in-memory only for delegation support — they do not survive process restarts.
 - Quiet mode requires explicit opt-in (`ATLAS_QUIET_MODE=true`) and only affects read-only tools for mature agents.
+- ProximityMesh profile requires UWB hardware (or BLE fallback); mock drivers are included for development. Set `ATLAS_HARDWARE_ADAPTER=raspberry-pi|esp32-uart|android|ios` for real hardware.
 
 ## License
 
