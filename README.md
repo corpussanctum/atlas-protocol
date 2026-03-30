@@ -52,13 +52,14 @@ When an agent requests permission to use a tool:
 
 ## Installation
 
-### From a marketplace
+### Install as Claude Code Plugin (one command)
 
 ```bash
-claude plugin install atlas-protocol@<marketplace>
+/plugin marketplace add corpussanctum/atlas-protocol
+/plugin install atlas-gatekeeper@atlas-protocol
 ```
 
-Claude Code prompts for the Telegram bot token, allowed chat IDs, and optional HMAC secret through the `userConfig` mechanism.
+After install, Claude Code automatically discovers all 25 Atlas MCP tools (identity, policy, audit, proximity) and prompts for Telegram configuration.
 
 ### Local development
 
@@ -528,6 +529,28 @@ Press `Ctrl+C` to shut down cleanly.
 
 > **Want real hardware?** Just set `ATLAS_HARDWARE_ADAPTER=raspberry-pi` (or `esp32-uart`) on your host and run the same command — the adapters auto-detect.
 
+## Usage Examples
+
+**Register an agent and check its identity:**
+```
+Use atlas_identity_register to create a "renderer" agent with role tool-caller
+and capabilities file:read, file:write. Then verify its credential.
+```
+
+**Proximity mesh — connect nearby agents and delegate:**
+```
+Use atlas_proximity_scan to find nearby agents. Connect to the closest one
+within 5 meters using atlas_proximity_connect, then delegate file:read
+capability to it using atlas_identity_delegate.
+```
+
+**Audit and drift detection:**
+```
+Run atlas_audit_verify to check the audit log integrity. Then use
+atlas_baseline_drift on the orchestrator agent to see if its behavior
+has changed in the last 30 minutes.
+```
+
 ## Testing
 
 ```bash
@@ -552,6 +575,10 @@ cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 - Agent secret keys are held in-memory only for delegation support — they do not survive process restarts.
 - Quiet mode requires explicit opt-in (`ATLAS_QUIET_MODE=true`) and only affects read-only tools for mature agents.
 - ProximityMesh profile requires UWB hardware (or BLE fallback); mock drivers are included for development. Set `ATLAS_HARDWARE_ADAPTER=raspberry-pi|esp32-uart|android|ios` for real hardware.
+
+## Privacy
+
+Atlas is local-first. Audit logs, credentials, and baselines stay on your filesystem. The only external communication is with Telegram (operator relay) and Ollama (local by default). See [PRIVACY.md](PRIVACY.md) for details.
 
 ## License
 

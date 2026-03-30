@@ -213,16 +213,19 @@ async function main(): Promise<void> {
           },
           required: ["message"],
         },
+        annotations: { readOnlyHint: false, destructiveHint: false },
       },
       {
         name: "atlas_audit_verify",
         description: "Verify audit log integrity: SHA3-256 chain, HMAC, and ML-DSA-65 signatures.",
         inputSchema: { type: "object" as const, properties: {} },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       {
         name: "atlas_status",
         description: "Get Atlas runtime status including identity registry, quantum signing, and Telegram state.",
         inputSchema: { type: "object" as const, properties: {} },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       // -- Identity management tools (v0.5.0) --------------------------------
       {
@@ -244,6 +247,7 @@ async function main(): Promise<void> {
           },
           required: ["name", "role", "capabilities"],
         },
+        annotations: { readOnlyHint: false, destructiveHint: false },
       },
       {
         name: "atlas_identity_verify",
@@ -255,6 +259,7 @@ async function main(): Promise<void> {
           },
           required: ["agent_id"],
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       {
         name: "atlas_identity_list",
@@ -265,6 +270,7 @@ async function main(): Promise<void> {
             filter: { type: "string", enum: ["active", "revoked", "expired", "all"], description: "Filter (default: active)" },
           },
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       {
         name: "atlas_identity_revoke",
@@ -277,6 +283,7 @@ async function main(): Promise<void> {
           },
           required: ["agent_id", "reason"],
         },
+        annotations: { readOnlyHint: false, destructiveHint: true },
       },
       // -- Delegation tools (v0.6.0) ------------------------------------------
       {
@@ -298,6 +305,7 @@ async function main(): Promise<void> {
           },
           required: ["parent_agent_id", "child_name", "child_role", "capabilities"],
         },
+        annotations: { readOnlyHint: false, destructiveHint: false },
       },
       {
         name: "atlas_identity_cascade_revoke",
@@ -310,6 +318,7 @@ async function main(): Promise<void> {
           },
           required: ["parent_agent_id", "reason"],
         },
+        annotations: { readOnlyHint: false, destructiveHint: true },
       },
       {
         name: "atlas_identity_tree",
@@ -321,6 +330,7 @@ async function main(): Promise<void> {
           },
           required: ["agent_id"],
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       // -- Baseline tools (v0.7.0) ---------------------------------------------
       {
@@ -333,6 +343,7 @@ async function main(): Promise<void> {
           },
           required: ["agent_id"],
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       {
         name: "atlas_baseline_drift",
@@ -345,6 +356,7 @@ async function main(): Promise<void> {
           },
           required: ["agent_id"],
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       {
         name: "atlas_baseline_list",
@@ -356,6 +368,7 @@ async function main(): Promise<void> {
             role: { type: "string", description: "Filter by agent role" },
           },
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       // -- Policy testing tool (v0.8.0) -----------------------------------------
       {
@@ -369,6 +382,7 @@ async function main(): Promise<void> {
             verbose: { type: "boolean", description: "Include all results, not just failures (default: false)" },
           },
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       // -- Break-glass tools (v0.8.0) ------------------------------------------
       {
@@ -385,22 +399,26 @@ async function main(): Promise<void> {
           },
           required: ["reason"],
         },
+        annotations: { readOnlyHint: false, destructiveHint: false },
       },
       {
         name: "atlas_break_glass_status",
         description: "Check current break-glass status.",
         inputSchema: { type: "object" as const, properties: {} },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       {
         name: "atlas_break_glass_revoke",
         description: "Revoke an active break-glass token immediately.",
         inputSchema: { type: "object" as const, properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: true },
       },
       // -- Audit rotation tools (v0.8.0) --------------------------------------
       {
         name: "atlas_audit_rotate",
         description: "Manually trigger audit log rotation. Archives the current log and starts a new one.",
         inputSchema: { type: "object" as const, properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: false },
       },
       {
         name: "atlas_audit_archives",
@@ -411,6 +429,7 @@ async function main(): Promise<void> {
             verify: { type: "boolean", description: "Verify integrity of all archives (default: false)" },
           },
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       // -- Why Layer tool (v0.6.0) --------------------------------------------
       {
@@ -425,6 +444,7 @@ async function main(): Promise<void> {
             window_size: { type: "number", description: "Max entries to analyze (default: 20)" },
           },
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       // -- Proximity Mesh tools (v1.1.0, SPEC § 13) ----------------------------
       {
@@ -432,6 +452,7 @@ async function main(): Promise<void> {
         description:
           "Get proximity mesh status: hardware availability, active sessions, advertising state, and configuration.",
         inputSchema: { type: "object" as const, properties: {} },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       {
         name: "atlas_proximity_scan",
@@ -442,6 +463,7 @@ async function main(): Promise<void> {
             duration_ms: { type: "number", description: "Scan duration in milliseconds (default: 5000)" },
           },
         },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       {
         name: "atlas_proximity_connect",
@@ -456,11 +478,13 @@ async function main(): Promise<void> {
           },
           required: ["device_id", "agent_id"],
         },
+        annotations: { readOnlyHint: false, destructiveHint: false },
       },
       {
         name: "atlas_proximity_sessions",
         description: "List active proximity mesh sessions.",
         inputSchema: { type: "object" as const, properties: {} },
+        annotations: { readOnlyHint: true, destructiveHint: false },
       },
       {
         name: "atlas_proximity_disconnect",
@@ -472,6 +496,7 @@ async function main(): Promise<void> {
           },
           required: ["session_id"],
         },
+        annotations: { readOnlyHint: false, destructiveHint: true },
       },
     ],
   }));

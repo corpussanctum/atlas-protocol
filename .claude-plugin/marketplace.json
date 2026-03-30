@@ -1,0 +1,35 @@
+{
+  "name": "atlas-protocol",
+  "description": "Enterprise-grade security governance for autonomous AI agents. Post-quantum audit trails, identity attestation, behavioral baselines, and human oversight via Telegram.",
+  "owner": {
+    "name": "TJ Lane / Corpus Sanctum Inc.",
+    "email": "tj@corpussanctum.ai",
+    "url": "https://github.com/corpussanctum"
+  },
+  "plugins": [
+    {
+      "name": "atlas-gatekeeper",
+      "version": "1.0.0",
+      "description": "Fail-closed agent governance: 97-rule policy engine, ML-DSA-65 signed audit trails, identity attestation, credential delegation, behavioral drift detection, and Telegram operator relay.",
+      "source": {
+        "type": "github",
+        "repo": "corpussanctum/atlas-protocol",
+        "ref": "main"
+      },
+      "category": "security",
+      "tags": ["security", "governance", "audit", "enterprise", "compliance", "post-quantum", "identity", "telegram"]
+    },
+    {
+      "name": "atlas-proximity-mesh",
+      "version": "1.0.0",
+      "description": "Cryptographic close-proximity agent swarms: UWB ranging, BLE discovery, Noise Protocol encrypted channels, and ML-DSA-65 signed proximity proofs. Offline-capable, infrastructure-free.",
+      "source": {
+        "type": "github",
+        "repo": "corpussanctum/atlas-protocol",
+        "ref": "main"
+      },
+      "category": "agent-mesh",
+      "tags": ["proximity", "offline", "post-quantum", "swarm", "uwb", "mesh"]
+    }
+  ]
+}
