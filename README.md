@@ -480,6 +480,26 @@ packages/atlas-didcomm-adapter/
 
 **Adapter dependencies**: None (transport is an interface). Credo-TS is an optional peer dependency.
 
+## One-command Docker Swarm Testbed (no hardware required)
+
+```bash
+# From the repo root
+cd examples/swarm
+docker compose up --build
+```
+
+This launches a complete 3-agent music swarm (orchestrator + renderer + mixer) with:
+
+- Simulated UWB ranging + proximity proofs
+- Full ML-DSA-65 credential exchange over DIDComm
+- Local 96-rule policy evaluation
+- Distance-aware task delegation (e.g., "apply reverb based on 2.4 m distance")
+- Live quantum audit trail streaming to console
+
+Press `Ctrl+C` to shut down cleanly.
+
+> **Want real hardware?** Just set `ATLAS_HARDWARE_ADAPTER=raspberry-pi` (or `esp32-uart`) on your host and run the same command — the adapters auto-detect.
+
 ## Testing
 
 ```bash

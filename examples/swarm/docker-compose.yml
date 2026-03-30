@@ -1,0 +1,17 @@
+name: atlas-swarm-demo
+
+services:
+  swarm:
+    build:
+      context: ../..
+      dockerfile: examples/swarm/Dockerfile
+    container_name: atlas-swarm
+    environment:
+      - ATLAS_HARDWARE_ADAPTER=mock
+      - ATLAS_MAX_PROXIMITY_METERS=15
+      - ATLAS_LOG_LEVEL=info
+      - NODE_ENV=development
+      - ATLAS_SIMULATED_DISTANCES=2.4,6.8,9.1
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
