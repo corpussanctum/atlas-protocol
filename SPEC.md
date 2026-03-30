@@ -978,7 +978,7 @@ Keys are sorted per Appendix D.2:
   "protocol": "atlas-protocol",
   "rootId": "did:atlas:550e8400-e29b-41d4-a716-446655440000",
   "type": "delegation-authority",
-  "version": "0.5.0"
+  "version": "0.8.4"
 }
 ```
 
@@ -1099,10 +1099,10 @@ These test vectors allow third-party implementations to verify canonical seriali
 
 **Input (canonical form, keys sorted per D.2):**
 ```
-{"capabilities":["file:read"],"childCredentialHash":"3b48e327089abd0ca4578d6cfb8a57a0568544dc3b82e199e77f9ab553e3e6e7","childId":"did:atlas:00000000-0000-4000-8000-000000000002","depth":1,"expiresAt":"2026-03-30T00:00:00.000Z","parentId":"did:atlas:00000000-0000-4000-8000-000000000001","protocol":"atlas-protocol","rootId":"did:atlas:00000000-0000-4000-8000-000000000001","type":"delegation-authority","version":"0.5.0"}
+{"capabilities":["file:read"],"childCredentialHash":"3b48e327089abd0ca4578d6cfb8a57a0568544dc3b82e199e77f9ab553e3e6e7","childId":"did:atlas:00000000-0000-4000-8000-000000000002","depth":1,"expiresAt":"2026-03-30T00:00:00.000Z","parentId":"did:atlas:00000000-0000-4000-8000-000000000001","protocol":"atlas-protocol","rootId":"did:atlas:00000000-0000-4000-8000-000000000001","type":"delegation-authority","version":"0.8.4"}
 ```
 
-**Expected SHA3-256:** `d4a72d8a5b6944be81b357daf3c5ab81496865b7c9e51faa573e1459eefa8a68`
+**Expected SHA3-256:** `7d228e107fa375d2f75b2a5718e713e61989bb09a6ba3b49046c9bebcc19059f`
 
 ### G.4 Redacted field (keyed hash)
 
@@ -1207,7 +1207,7 @@ function verifyDelegatedCredential(credential, registry, issuerPublicKey):
     baseFields = credential without [issuerSignature, credentialHash, delegated, delegation]
     baseHash = SHA3-256(canonicalize(baseFields))
     authority = {
-        protocol: "atlas-protocol", version: credential.version,
+        protocol: "atlas-protocol", version: PROTOCOL_VERSION,  // "0.8.4", NOT credential.version
         type: "delegation-authority",
         rootId: credential.delegation.rootId,
         parentId: credential.delegation.parentId,

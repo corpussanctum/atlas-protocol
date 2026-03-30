@@ -127,6 +127,7 @@ export async function initAgentIdentity(): Promise<boolean> {
 
 const ATLAS_DID_PREFIX = "did:atlas:";
 const CREDENTIAL_VERSION = "0.5.0";
+const PROTOCOL_VERSION = "0.8.4";
 const DEFAULT_TTL_HOURS = 24;
 
 // ---------------------------------------------------------------------------
@@ -427,7 +428,7 @@ function buildDelegationAuthority(params: {
     protocol: "atlas-protocol",
     rootId: params.rootId,
     type: "delegation-authority",
-    version: CREDENTIAL_VERSION,
+    version: PROTOCOL_VERSION,
   };
   return JSON.stringify(obj);
 }

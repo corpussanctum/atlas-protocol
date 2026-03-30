@@ -132,7 +132,7 @@ const SYSTEM_PROMPT_HASH = createHash("sha256")
   .update(ANOMALY_PROMPT + INTENT_PROMPT + THREAT_PROMPT)
   .digest("hex");
 
-const PROTOCOL_VERSION = "0.8.1";
+const PROTOCOL_VERSION = "0.8.4";
 
 /**
  * Fetch model provenance from Ollama API (best-effort, never throws).
