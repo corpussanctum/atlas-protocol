@@ -277,7 +277,7 @@ Drift signals are included in the Why Layer assessment, enriched into the audit 
 
 ## MCP tools
 
-Atlas exposes 20 MCP tools to the Claude Code session:
+Atlas exposes 25 MCP tools to the Claude Code session:
 
 ### Core
 
@@ -333,6 +333,16 @@ Atlas exposes 20 MCP tools to the Claude Code session:
 |---|---|
 | `atlas_audit_rotate` | Manually trigger audit log rotation |
 | `atlas_audit_archives` | List or verify archived audit log files |
+
+### Proximity mesh
+
+| Tool | Description |
+|---|---|
+| `atlas_proximity_status` | Hardware availability, active sessions, advertising state, config |
+| `atlas_proximity_scan` | Scan for nearby Atlas agents via BLE |
+| `atlas_proximity_connect` | Establish a secure mesh session (7-step protocol) |
+| `atlas_proximity_sessions` | List active proximity mesh sessions |
+| `atlas_proximity_disconnect` | Close a proximity mesh session |
 
 ## Skills
 
@@ -394,7 +404,7 @@ The ML-DSA-65 signing keypair is auto-generated on first run and stored at `<dat
 
 ## Identity and Briefcase integration
 
-If `ATLAS_BRIEFCASE_PATH` points to a [DIB Briefcase](https://github.com/corpussanctum/dib) directory, Atlas loads a 7-tier consent model (Public through Sealed / 42 CFR Part 2). The policy engine enforces consent boundaries and redacts sensitive fields in audit entries. A sample Briefcase is included in `sample-briefcase/`.
+If `ATLAS_BRIEFCASE_PATH` points to a [DIB Briefcase](sample-briefcase/) directory, Atlas loads a 7-tier consent model (Public through Sealed / 42 CFR Part 2). The policy engine enforces consent boundaries and redacts sensitive fields in audit entries. A sample Briefcase is included in `sample-briefcase/`.
 
 This is an optional hardening layer. Atlas works fully without it.
 
@@ -437,7 +447,20 @@ src/
 ├── quiet-mode.ts          # Auto-approve low-risk actions for mature agents
 ├── mitre-attack.ts        # ATT&CK technique → name + tactic lookup (65+ entries)
 ├── identity-provider.ts   # DIB Briefcase integration (consent tiers)
-└── telegram.ts            # Telegram Bot API client (native fetch, long-polling)
+├── telegram.ts            # Telegram Bot API client (native fetch, long-polling)
+└── proximity/             # ProximityMesh profile (SPEC § 13)
+    ├── types.ts           # UWB/BLE/NFC driver interfaces, proof types, mesh session
+    ├── attestation.ts     # ML-DSA-65 signed proximity proofs (UWB ToF + BLE RSSI)
+    ├── noise-session.ts   # Noise Protocol (IK/KK) sessions, AES-256-GCM encryption
+    ├── hardware.ts        # Mock drivers for testing
+    ├── mesh.ts            # 7-step mesh orchestrator (discovery → session → audit)
+    ├── index.ts           # Public API + env config loader
+    └── adapters/          # Production hardware drivers
+        ├── index.ts       # Auto-detect factory (ATLAS_HARDWARE_ADAPTER)
+        ├── raspberry-pi.ts  # UART/SPI (Reyax RYUW122, Qorvo DWM3000)
+        ├── esp32-uart.ts    # USB serial (Makerfabs, Ai-Thinker)
+        ├── android-jetpack.ts # React Native bridge (Jetpack UWB)
+        └── ios-nearby.ts     # React Native bridge (NearbyInteraction)
 
 packages/atlas-didcomm-adapter/
 ├── src/
@@ -461,13 +484,13 @@ packages/atlas-didcomm-adapter/
 
 ```bash
 # Core gatekeeper
-npm run build && npm test  # 575 tests
+npm run build && npm test  # 614 tests
 
 # DIDComm adapter
 cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 ```
 
-**Core** (575 tests): policy rules, regression fixtures, audit integrity, audit rotation, quantum signing, identity lifecycle, credential delegation, attestation flow, Why Layer reasoning, trigger logic, baseline calculation, drift detection, break-glass mechanism, quiet mode eligibility, and configuration loading.
+**Core** (614 tests): policy rules, regression fixtures, audit integrity, audit rotation, quantum signing, identity lifecycle, credential delegation, attestation flow, Why Layer reasoning, trigger logic, baseline calculation, drift detection, break-glass mechanism, quiet mode eligibility, configuration loading, proximity attestation, mesh sessions, Noise Protocol, and hardware adapters.
 
 **Adapter** (129 tests): peer pairing, classification, policy mapping, inbound/outbound enforcement, delegation scope enforcement, replay protection persistence, Credo-TS transport, and full orchestrator integration flow.
 
