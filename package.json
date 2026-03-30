@@ -1,6 +1,6 @@
 {
   "name": "atlas-protocol",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Enterprise-grade security governance for autonomous AI agents. Identity attestation, post-quantum audit trails, and human oversight.",
   "type": "module",
   "main": "dist/index.js",

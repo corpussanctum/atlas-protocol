@@ -1,12 +1,16 @@
 {
   "name": "atlas-protocol",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "manifest_version": "0.2",
   "description": "Enterprise-grade security governance for autonomous AI agents. Identity attestation, post-quantum audit trails, and human oversight.",
   "author": {
     "name": "TJ Lane — Corpus Sanctum Inc.",
     "email": "tj@corpussanctum.ai"
   },
   "license": "Apache-2.0",
+  "privacy_policies": [
+    "https://github.com/corpussanctum/atlas-protocol/blob/main/PRIVACY.md"
+  ],
   "keywords": [
     "claude-code",
     "security",
