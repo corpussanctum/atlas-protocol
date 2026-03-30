@@ -1,7 +1,7 @@
 {
   "name": "atlas-protocol",
   "version": "1.0.0",
-  "description": "Telegram approval channel for Claude Code with fail-closed permission relay, policy rules, and tamper-evident audit logging.",
+  "description": "Enterprise-grade security governance for autonomous AI agents. Identity attestation, post-quantum audit trails, and human oversight.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -18,10 +18,15 @@
     "claude-code",
     "channels",
     "mcp",
+    "security",
+    "governance",
+    "audit",
+    "enterprise",
+    "compliance",
+    "post-quantum",
+    "identity",
     "telegram",
-    "permission-relay",
-    "audit-log",
-    "security"
+    "permission-relay"
   ],
   "author": "TJ Lane <tj@corpussanctum.ai>",
   "license": "Apache-2.0",

@@ -1,8 +1,12 @@
 # Atlas Protocol
 
-A Claude Code plugin that gates autonomous agent sessions with identity attestation, behavioral baselines, and a post-quantum audit trail — all relayed through Telegram for operator oversight.
+Enterprise-grade security governance for autonomous AI agents. Identity attestation, post-quantum audit trails, and human oversight — all relayed through Telegram for operator control.
 
-Atlas is designed around a single assumption: **the agent might be compromised**. Every default is fail-closed. Agents must prove identity before acting. Behavioral drift is detected across sessions. Every decision is signed with ML-DSA-65, designed for post-quantum resistance against harvest-now-decrypt-later threats under the protocol's cryptographic assumptions (see [SPEC.md Appendix H](SPEC.md#appendix-h-security-limitations) for what Atlas does and does not guarantee).
+> **Advanced Usage** — Atlas requires a Telegram bot token, Node.js 20+, and configuration before first use. See [Requirements](#requirements) and [Quick Start](#quick-start) below.
+
+> **Not a compliance certification.** Atlas is a security tool that enforces fail-closed governance on AI agent sessions. It does not guarantee protection against host compromise, replace legal counsel, or constitute a compliance certification. See [SPEC.md Appendix H](SPEC.md#appendix-h-security-limitations) for what Atlas does and does not guarantee.
+
+Atlas is designed around a single assumption: **the agent might be compromised**. Every default is fail-closed. Agents must prove identity before acting. Behavioral drift is detected across sessions. Every decision is signed with ML-DSA-65, designed for post-quantum resistance against harvest-now-decrypt-later threats under the protocol's cryptographic assumptions.
 
 > **Spec vs Implementation:** This README documents the reference implementation. For the normative protocol specification (conformance profiles, MUST/SHOULD requirements, DID method, delegation signing semantics), see **[SPEC.md](SPEC.md)**.
 
@@ -62,6 +66,30 @@ Claude Code prompts for the Telegram bot token, allowed chat IDs, and optional H
 git clone https://github.com/corpussanctum/atlas-protocol.git
 cd atlas-protocol
 npm install && npm run build
+claude --plugin-dir ./atlas-protocol
+```
+
+## Quick Start
+
+Try Atlas without configuring Telegram or Ollama:
+
+```bash
+git clone https://github.com/corpussanctum/atlas-protocol.git
+cd atlas-protocol
+npm install && npm run build
+npm test                          # 614 tests — see it work
+```
+
+To explore the ProximityMesh agent swarm demo (no hardware needed):
+
+```bash
+cd examples/swarm
+docker compose up --build         # 3-agent mesh with mock UWB
+```
+
+For production use, configure Telegram credentials (see [Configuration](#configuration) below) and run with Claude Code:
+
+```bash
 claude --plugin-dir ./atlas-protocol
 ```
 
