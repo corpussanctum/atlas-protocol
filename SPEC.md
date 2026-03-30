@@ -31,13 +31,14 @@ The protocol does NOT prescribe:
 
 ## 2. Conformance profiles
 
-| Profile | Intended use | Bootstrap confirmation | Break-glass | Quiet mode | Why Layer | Baseline drift |
-|---|---|---|---|---|---|---|
-| **Development** | Local testing, CI | MAY skip | MAY omit | MAY enable freely | MAY disable | MAY omit |
-| **Production** | Deployed agent governance | MUST require | SHOULD support | SHOULD restrict to mature agents | SHOULD enable | MUST enable |
-| **Research** | Protocol experimentation | MUST require | SHOULD support | MAY enable | MUST enable | MUST enable |
+| Profile | Intended use | Bootstrap confirmation | Break-glass | Quiet mode | Why Layer | Baseline drift | Proximity attestation |
+|---|---|---|---|---|---|---|---|
+| **Development** | Local testing, CI | MAY skip | MAY omit | MAY enable freely | MAY disable | MAY omit | MAY omit |
+| **Production** | Deployed agent governance | MUST require | SHOULD support | SHOULD restrict to mature agents | SHOULD enable | MUST enable | MAY omit |
+| **Research** | Protocol experimentation | MUST require | SHOULD support | MAY enable | MUST enable | MUST enable | MAY omit |
+| **ProximityMesh** | Physical-space agent swarms (rooms, events, vehicles) | MUST require | SHOULD support | SHOULD restrict to mature agents | SHOULD enable | MUST enable | MUST require |
 
-Implementations MUST declare which conformance profile they target. The reference implementation defaults to Production.
+Implementations MUST declare which conformance profile they target. The reference implementation defaults to Production; a future reference implementation MAY default to ProximityMesh when UWB hardware is detected.
 
 ## 3. Core protocol
 
@@ -1310,3 +1311,136 @@ function verifyCheckpoints(lines):
 
         lastCheckpointSeq = entry.seq
 ```
+
+## 13. Proximity Mesh Profile
+
+### 13.1 Purpose
+
+The Proximity Mesh profile extends Atlas Protocol with cryptographically-enforced physical proximity as a first-class authentication factor. It enables infrastructure-free, offline-capable agent-to-agent meshes while preserving the existing fail-closed identity, policy, delegation, and audit guarantees.
+
+This profile is designed for the agentic wave: swarms of agents that discover, authenticate, delegate, and collaborate in the same physical space (studio, warehouse, vehicle, event venue) without relying on Starlink, Wi-Fi, or any external network.
+
+### 13.2 Conformance requirements
+
+An implementation claiming ProximityMesh conformance MUST:
+
+1. Perform physical proximity attestation before any credential exchange, delegation, or policy evaluation.
+2. Support Ultra-Wideband (UWB) IEEE 802.15.4z / FiRa Core 3.0+ ranging with Scrambled Timestamp Sequence (STS) as the primary method.
+3. Bind the UWB ranging result to the `did:atlas` credential via an ML-DSA-65 signature.
+4. Enforce all existing Atlas rules (identity, policy engine, audit trail, cascade revocation) locally between peers.
+5. Log every proximity event to the tamper-evident quantum audit trail.
+
+Optional but RECOMMENDED:
+
+- Noise Protocol Framework (IK or KK pattern) over the UWB data channel.
+- Fallback discovery via BLE 5.4 advertisement (`atlas-proximity` service UUID).
+- Ultra-close bootstrap via NFC tap when available.
+
+### 13.3 Proximity attestation
+
+Before any Atlas credential is presented or accepted, the presenting agent MUST prove it is physically within the configured maximum range (default: 10 m, operator-configurable via `ATLAS_MAX_PROXIMITY_METERS`).
+
+**Primary method:**
+
+UWB Time-of-Flight (ToF) ranging with STS (prevents relay attacks). The ranging challenge MUST be signed by the presenting agent's ML-DSA-65 key and included in the subsequent Noise handshake as Additional Data (AD).
+
+**New credential claim** (added to every `AgentCredential`):
+
+```json
+{
+  "proximityCapabilities": {
+    "supportedMethods": ["uwb-sts", "ble-rssi", "nfc"],
+    "maxRangeMeters": 10,
+    "distanceBoundingSupported": true,
+    "lastVerifiedRangeMeters": 4.2,
+    "lastVerifiedTimestamp": "2026-03-29T20:15:00Z"
+  }
+}
+```
+
+### 13.4 Secure channel establishment flow (normative)
+
+1. **Discovery** — BLE advertisement containing `atlas-proximity` service UUID and short-lived ephemeral public key.
+2. **UWB ranging handshake** — mutual distance bounding (both agents verify the other is within range).
+3. **Noise Protocol handshake** — IK pattern (or KK for pre-shared identity) with proximity proof as AD.
+4. **Atlas credential exchange** — present `did:atlas` credential + chain + proximity proof.
+5. **Local verification** — run the full Atlas permission pipeline (identity attestation + policy engine + anomaly detection) locally on both sides.
+6. **Scoped delegation** (optional) — issue child credential using existing cascade rules.
+7. **Encrypted messaging** — carry ACP-style or DIDComm payloads over the Noise session (or UWB data channel).
+
+All steps 2–7 MUST be recorded in the quantum audit trail with new event types:
+
+- `proximity:range` — raw ToF result
+- `proximity:verified` — successful binding
+- `proximity:rejected` — relay/spoof/distance violation
+
+### 13.5 Fallbacks and graceful degradation
+
+- If UWB is unavailable: fall back to BLE RSSI + visual/audio out-of-band confirmation (operator-configurable).
+- If no proximity hardware: degrade to centralized relay mode (existing Production profile behavior).
+
+## Appendix K: Hardware Adapter Reference
+
+This appendix lists reference hardware for ProximityMesh conformance testing. All adapters implement the `UWBDriver` and `BLEDriver` interfaces defined in § 13. The reference implementation ships mock adapters by default; real hardware is activated via `ATLAS_HARDWARE_ADAPTER`.
+
+### K.1 Adapter selection
+
+```
+ATLAS_HARDWARE_ADAPTER=mock|raspberry-pi|esp32-uart|android|ios
+```
+
+If unset, the factory auto-detects:
+1. Linux + `/proc/device-tree/model` contains "Raspberry Pi" + UWB device present → `raspberry-pi`
+2. Linux + `/dev/ttyUSB*` or `/dev/ttyACM*` present → `esp32-uart`
+3. Otherwise → `mock`
+
+### K.2 Reference hardware
+
+| Adapter | Platform | UWB Module | Interface | Approx. Cost | STS Support |
+|---|---|---|---|---|---|
+| `raspberry-pi` | Raspberry Pi 4/5, any Linux SBC | Reyax RYUW122 | UART (GPIO) | ~$15 | Yes |
+| `raspberry-pi` | Raspberry Pi 4/5, any Linux SBC | Qorvo DWM3000 | SPI | ~$25 | Yes |
+| `esp32-uart` | Any host with USB | Makerfabs ESP32 UWB (DW3000) | USB Serial | ~$30 | Yes |
+| `esp32-uart` | Any host with USB | Ai-Thinker BW16-Kit (DW1000) | USB Serial | ~$20 | No (DW1000) |
+| `android` | Android 12+ w/ UWB chip | Built-in (Pixel 6 Pro+, Galaxy S21 Ultra+) | Jetpack API | $0 (phone) | Yes |
+| `ios` | iOS 16+ w/ U1/U2 chip | Built-in (iPhone 11+) | NearbyInteraction | $0 (phone) | Yes (U2) |
+| `mock` | Any | None (simulated) | In-memory | $0 | Simulated |
+
+### K.3 Wiring reference (Raspberry Pi + RYUW122)
+
+```
+RYUW122 Pin  →  Pi GPIO
+-----------     --------
+VCC          →  3.3V (pin 1)
+GND          →  GND (pin 6)
+TX           →  RXD / GPIO15 (pin 10)
+RX           →  TXD / GPIO14 (pin 8)
+```
+
+Prerequisites: enable UART in `/boot/firmware/config.txt` (`enable_uart=1`), install `serialport` (`npm install serialport`).
+
+### K.4 Dependencies
+
+| Adapter | Required npm package | Notes |
+|---|---|---|
+| `raspberry-pi` | `serialport` (optional peer dep) | Only for UART/SPI transport |
+| `esp32-uart` | `serialport` (optional peer dep) | Only for USB serial |
+| `android` | `react-native` (app runtime) | Native module bridge |
+| `ios` | `react-native` (app runtime) | Native module bridge |
+| `mock` | None | Zero dependencies |
+
+### K.5 3-agent swarm bill of materials
+
+Minimum viable swarm (3 nodes, mock or real):
+
+| Component | Qty | Unit Cost | Total |
+|---|---|---|---|
+| Raspberry Pi Zero 2 W | 3 | ~$15 | ~$45 |
+| Reyax RYUW122 UWB module | 3 | ~$15 | ~$45 |
+| MicroSD card (16GB+) | 3 | ~$5 | ~$15 |
+| USB power supply | 3 | ~$5 | ~$15 |
+| **Total** | | | **~$120** |
+
+Alternative (single-node dev): 1x Raspberry Pi 5 (~$80) + 1x RYUW122 (~$15) = **~$95**. Use mock peers for the other two agents.
+
+Implementations SHOULD document which adapter was used when reporting ProximityMesh conformance test results.

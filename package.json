@@ -45,6 +45,14 @@
     "@noble/post-quantum": "^0.2.0",
     "zod": "^3.24.0"
   },
+  "peerDependencies": {
+    "serialport": ">=12.0.0"
+  },
+  "peerDependenciesMeta": {
+    "serialport": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"

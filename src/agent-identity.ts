@@ -42,6 +42,20 @@ export type AgentCapability =
   | "identity:register"
   | "identity:revoke";
 
+/** Proximity capabilities for agents in the ProximityMesh profile */
+export interface ProximityCapabilities {
+  /** Methods this agent supports */
+  supportedMethods: ("uwb-sts" | "ble-rssi" | "nfc")[];
+  /** Maximum range this agent will accept (meters) */
+  maxRangeMeters: number;
+  /** Whether distance bounding is supported (UWB STS) */
+  distanceBoundingSupported: boolean;
+  /** Last verified range (updated after each successful attestation) */
+  lastVerifiedRangeMeters?: number;
+  /** ISO-8601 of last verification */
+  lastVerifiedTimestamp?: string;
+}
+
 export interface AgentCredential {
   agentId: string;
   name: string;
@@ -56,6 +70,8 @@ export interface AgentCredential {
   revoked: boolean;
   revokedAt?: string;
   revokedReason?: string;
+  /** Proximity capabilities (ProximityMesh profile, SPEC § 13.3) */
+  proximityCapabilities?: ProximityCapabilities;
 }
 
 export interface AgentKeyPair {

@@ -44,6 +44,8 @@ import { runPolicyTests } from "./policy-test-runner.js";
 import { BreakGlassManager } from "./break-glass.js";
 import { AuditRotationManager } from "./audit-rotation.js";
 import { checkQuietEligibility, loadQuietConfig } from "./quiet-mode.js";
+import { ProximityMesh, loadProximityConfig, MockUWBDriver, MockBLEDriver, MockNFCDriver } from "./proximity/index.js";
+import type { ProximityMeshConfig } from "./proximity/index.js";
 
 const VERSION = "1.0.0";
 
@@ -90,6 +92,14 @@ async function main(): Promise<void> {
 
   // Quiet mode
   const quietConfig = loadQuietConfig();
+
+  // Proximity Mesh (SPEC § 13)
+  const proximityConfig = loadProximityConfig();
+  const uwbDriver = new MockUWBDriver();
+  const bleDriver = new MockBLEDriver();
+  const nfcDriver = new MockNFCDriver();
+  // ProximityMesh is initialized lazily on first proximity tool call
+  let proximityMesh: ProximityMesh | undefined;
 
   // Audit log rotation
   const rotationMaxBytes = parseInt(process.env.ATLAS_AUDIT_MAX_SIZE_MB ?? "10", 10) * 1024 * 1024;
@@ -414,6 +424,53 @@ async function main(): Promise<void> {
             window_minutes: { type: "number", description: "Time window in minutes (default: 60)" },
             window_size: { type: "number", description: "Max entries to analyze (default: 20)" },
           },
+        },
+      },
+      // -- Proximity Mesh tools (v1.1.0, SPEC § 13) ----------------------------
+      {
+        name: "atlas_proximity_status",
+        description:
+          "Get proximity mesh status: hardware availability, active sessions, advertising state, and configuration.",
+        inputSchema: { type: "object" as const, properties: {} },
+      },
+      {
+        name: "atlas_proximity_scan",
+        description: "Scan for nearby Atlas agents via BLE. Returns discovered peers with estimated distances.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            duration_ms: { type: "number", description: "Scan duration in milliseconds (default: 5000)" },
+          },
+        },
+      },
+      {
+        name: "atlas_proximity_connect",
+        description:
+          "Establish a secure mesh session with a discovered peer. Executes the full 7-step protocol: " +
+          "BLE discovery → UWB ranging → Noise handshake → credential exchange → policy evaluation → session establishment → audit logging.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            device_id: { type: "string", description: "Device ID of the discovered peer" },
+            agent_id: { type: "string", description: "Local agent's did:atlas:<uuid> to present" },
+          },
+          required: ["device_id", "agent_id"],
+        },
+      },
+      {
+        name: "atlas_proximity_sessions",
+        description: "List active proximity mesh sessions.",
+        inputSchema: { type: "object" as const, properties: {} },
+      },
+      {
+        name: "atlas_proximity_disconnect",
+        description: "Close a proximity mesh session.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            session_id: { type: "string", description: "Session ID to close" },
+          },
+          required: ["session_id"],
         },
       },
     ],
@@ -1126,6 +1183,145 @@ async function main(): Promise<void> {
             type: "text" as const,
             text: JSON.stringify(assessment, null, 2),
           }],
+        };
+      }
+
+      // -- Proximity Mesh tool handlers (v1.1.0) --------------------------------
+
+      case "atlas_proximity_status": {
+        const hwAvail = {
+          uwb: await uwbDriver.isAvailable().catch(() => false),
+          ble: await bleDriver.isAvailable().catch(() => false),
+          nfc: await nfcDriver.isAvailable().catch(() => false),
+        };
+        const sessions = proximityMesh?.listSessions() ?? [];
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              profile: "ProximityMesh",
+              hardware: hwAvail,
+              config: proximityConfig,
+              advertising: proximityMesh?.isAdvertising() ?? false,
+              activeSessions: sessions.length,
+              sessions: sessions.map((s) => ({
+                sessionId: s.sessionId,
+                remoteAgentId: s.remoteAgentId,
+                distanceMeters: s.proximityProof.distanceMeters,
+                method: s.proximityProof.method,
+                establishedAt: s.establishedAt,
+              })),
+            }, null, 2),
+          }],
+        };
+      }
+
+      case "atlas_proximity_scan": {
+        const scanDuration = typeof args?.duration_ms === "number" ? args.duration_ms : 5000;
+        if (!proximityMesh) {
+          if (!sessionAgentId) {
+            return { content: [{ type: "text" as const, text: "No active agent — register an identity first (atlas_identity_register)" }], isError: true };
+          }
+          proximityMesh = new ProximityMesh(sessionAgentId, {
+            uwb: uwbDriver, ble: bleDriver, nfc: nfcDriver,
+            signer, registry, audit, policy: policyEngine,
+          }, proximityConfig);
+        }
+        const peers = await proximityMesh.scanForPeers(scanDuration);
+        return {
+          content: [{
+            type: "text" as const,
+            text: peers.length === 0
+              ? "No Atlas agents discovered nearby."
+              : JSON.stringify(peers.map((p) => ({
+                  deviceId: p.deviceId,
+                  agentIdHash: p.agentIdHash,
+                  supportedMethods: p.supportedMethods,
+                  maxRangeMeters: p.maxRangeMeters,
+                  estimatedDistanceMeters: p.estimatedDistanceMeters,
+                  discoveredAt: p.discoveredAt,
+                })), null, 2),
+          }],
+        };
+      }
+
+      case "atlas_proximity_connect": {
+        const deviceId = args?.device_id as string;
+        const agentId = args?.agent_id as string;
+        if (!deviceId || !agentId) {
+          return { content: [{ type: "text" as const, text: "device_id and agent_id are required" }], isError: true };
+        }
+        const cred = registry.get(agentId);
+        if (!cred) {
+          return { content: [{ type: "text" as const, text: `Agent ${agentId} not found in registry` }], isError: true };
+        }
+        if (!proximityMesh) {
+          proximityMesh = new ProximityMesh(agentId, {
+            uwb: uwbDriver, ble: bleDriver, nfc: nfcDriver,
+            signer, registry, audit, policy: policyEngine,
+          }, proximityConfig);
+        }
+        try {
+          // Build a synthetic DiscoveredPeer from the device_id
+          const peer = {
+            deviceId,
+            agentIdHash: "unknown",
+            ephemeralPublicKey: new Uint8Array(32),
+            supportedMethods: ["uwb-sts" as const],
+            maxRangeMeters: proximityConfig.maxProximityMeters,
+            discoveredAt: new Date().toISOString(),
+          };
+          const session = await proximityMesh.establishSession(peer, cred);
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "connected",
+                sessionId: session.sessionId,
+                remoteAgentId: session.remoteAgentId,
+                distanceMeters: session.proximityProof.distanceMeters,
+                method: session.proximityProof.method,
+                stsEnabled: session.proximityProof.stsEnabled,
+                establishedAt: session.establishedAt,
+              }, null, 2),
+            }],
+          };
+        } catch (err: any) {
+          return { content: [{ type: "text" as const, text: `Proximity connection failed: ${err.message}` }], isError: true };
+        }
+      }
+
+      case "atlas_proximity_sessions": {
+        const meshSessions = proximityMesh?.listSessions() ?? [];
+        return {
+          content: [{
+            type: "text" as const,
+            text: meshSessions.length === 0
+              ? "No active proximity mesh sessions."
+              : JSON.stringify(meshSessions.map((s) => ({
+                  sessionId: s.sessionId,
+                  localAgentId: s.localAgentId,
+                  remoteAgentId: s.remoteAgentId,
+                  distanceMeters: s.proximityProof.distanceMeters,
+                  method: s.proximityProof.method,
+                  stsEnabled: s.proximityProof.stsEnabled,
+                  establishedAt: s.establishedAt,
+                })), null, 2),
+          }],
+        };
+      }
+
+      case "atlas_proximity_disconnect": {
+        const sessId = args?.session_id as string;
+        if (!sessId) {
+          return { content: [{ type: "text" as const, text: "session_id is required" }], isError: true };
+        }
+        if (!proximityMesh) {
+          return { content: [{ type: "text" as const, text: "No proximity mesh active" }], isError: true };
+        }
+        await proximityMesh.closeSession(sessId);
+        return {
+          content: [{ type: "text" as const, text: `Session ${sessId} closed.` }],
         };
       }
 
