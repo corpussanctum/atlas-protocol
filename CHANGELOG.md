@@ -2,6 +2,24 @@
 
 All notable changes to Atlas Protocol are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Bootstrap & break-glass confirmation now reachable under stdio MCP transport.**
+  Previously the 6-character confirmation code was written to `stdout` via
+  `console.log`, which collides with the JSON-RPC channel when Atlas runs as
+  a stdio MCP child process — the operator could see the Telegram challenge
+  but had no way to obtain the code. The code is now written to STDERR (so
+  it remains visible in terminal launches) and additionally persisted to
+  `<data_dir>/bootstrap-code.txt` (or `break-glass-code.txt`) with mode 0600
+  for the duration of the confirmation window. The file is single-use:
+  deleted on confirmation success, denial, or timeout. Two-channel verification
+  per SPEC §4.6 is preserved — filesystem access on the host remains a separate
+  channel from the Telegram operator relay, and the code is **never** sent over
+  Telegram.
+- All `console.log` calls in `src/index.ts` migrated to `console.error` to
+  prevent any future stdout pollution of the MCP JSON-RPC stream.
+
 ## [1.0.0] - 2026-03-29
 
 First stable release. All pre-tag blockers resolved, test vectors verified, spec status

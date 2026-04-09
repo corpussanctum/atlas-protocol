@@ -20,6 +20,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
+import { writeFileSync, unlinkSync, chmodSync } from "node:fs";
+import { join } from "node:path";
 import { loadConfig } from "./config.js";
 import { PolicyEngine } from "./policy-engine.js";
 import type { PermissionRequest, PolicyResult } from "./policy-engine.js";
@@ -68,6 +70,35 @@ const PermissionRequestSchema = z.object({
     input_preview: z.string(),
   }),
 });
+
+/**
+ * Write a confirmation code (bootstrap or break-glass) to a single-use file
+ * inside `data_dir` with mode 0600. This makes the code reachable when Atlas
+ * runs as a stdio MCP child process, where stdout is the JSON-RPC channel and
+ * stderr may be captured by the parent (and not visible to the operator).
+ *
+ * Two-channel security per SPEC §4.6 is preserved: filesystem access on the
+ * host is the equivalent of physical/SSH console access — it remains a
+ * separate channel from the Telegram operator relay.
+ *
+ * Caller MUST invoke `clearConfirmCodeFile` after the confirmation flow ends
+ * (success, denial, or timeout) to enforce single-use semantics.
+ */
+function writeConfirmCodeFile(dataDir: string, filename: string, code: string): string {
+  const filePath = join(dataDir, filename);
+  writeFileSync(filePath, code + "\n", { mode: 0o600 });
+  // Defensive: ensure mode 0600 even if umask interfered with the create-mode
+  try { chmodSync(filePath, 0o600); } catch { /* best effort */ }
+  return filePath;
+}
+
+function clearConfirmCodeFile(dataDir: string, filename: string): void {
+  try {
+    unlinkSync(join(dataDir, filename));
+  } catch {
+    // Best effort — file may not exist if it was never written
+  }
+}
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -623,40 +654,53 @@ async function main(): Promise<void> {
           }
         }
 
-        // Bootstrap confirmation: two-channel verification via console + Telegram
-        // Generates a code printed to server console, operator confirms via Telegram
-        // Skip if ATLAS_BOOTSTRAP_SKIP_CONFIRM=true (dev/testing only — logged as warning)
+        // Bootstrap confirmation: two-channel verification per SPEC §4.6.
+        // Channel 1: host (terminal stderr OR a 0600-mode file in data_dir).
+        // Channel 2: Telegram operator relay (challenge + reply).
+        // The code is NEVER sent over Telegram — that would collapse both
+        // channels into one and defeat the threat model.
+        // Skip if ATLAS_BOOTSTRAP_SKIP_CONFIRM=true (Development conformance only).
         const skipBootstrapConfirm = process.env.ATLAS_BOOTSTRAP_SKIP_CONFIRM === "true";
         if (isBootstrap && config.telegram_bot_token && !skipBootstrapConfirm) {
           const confirmCode = randomBytes(3).toString("hex").toUpperCase(); // 6 hex chars
           const confirmTimeoutMs = 120_000; // 2 minutes
+          const codeFileName = "bootstrap-code.txt";
+          const codeFilePath = writeConfirmCodeFile(config.data_dir, codeFileName, confirmCode);
 
-          // Print code to server console (requires physical/SSH access to see)
-          console.log("");
-          console.log("╔══════════════════════════════════════════════════════════════╗");
-          console.log("║  ATLAS BOOTSTRAP CONFIRMATION                               ║");
-          console.log("║                                                              ║");
-          console.log(`║  Code: ${confirmCode}                                            ║`);
-          console.log("║                                                              ║");
-          console.log("║  Send this code via Telegram to confirm first registration.  ║");
-          console.log("║  Timeout: 120 seconds                                        ║");
-          console.log("╚══════════════════════════════════════════════════════════════╝");
-          console.log("");
+          // Print code to STDERR (not stdout — stdout is the MCP JSON-RPC
+          // channel when Atlas runs as a stdio child process). Operators with
+          // a terminal will see this; operators with only filesystem access
+          // can read the same code from `codeFilePath`.
+          console.error("");
+          console.error("╔══════════════════════════════════════════════════════════════╗");
+          console.error("║  ATLAS BOOTSTRAP CONFIRMATION                                ║");
+          console.error("║                                                              ║");
+          console.error(`║  Code: ${confirmCode}                                                  ║`);
+          console.error("║                                                              ║");
+          console.error("║  Send this code via Telegram to confirm first registration.  ║");
+          console.error("║  Timeout: 120 seconds                                        ║");
+          console.error("╚══════════════════════════════════════════════════════════════╝");
+          console.error(`[atlas] Code also written to: ${codeFilePath} (mode 0600, single-use)`);
+          console.error("");
 
-          // Send challenge to Telegram
+          // Send challenge to Telegram. Per SPEC §4.6, the code itself is NOT
+          // included — the operator must obtain it from the host channel.
           const challengeMsg =
             `🔐 <b>BOOTSTRAP CONFIRMATION REQUIRED</b>\n\n` +
             `A first-time agent registration was requested:\n` +
             `<b>Name:</b> <code>${escapeHtml(regName)}</code>\n` +
             `<b>Role:</b> <code>${escapeHtml(role)}</code>\n` +
             `<b>Capabilities:</b> ${capabilities.length}\n\n` +
-            `To confirm, reply with the 6-character code shown on the server console.\n` +
+            `To confirm, reply with the 6-character code shown on the server ` +
+            `console <b>or</b> read it from <code>${escapeHtml(codeFilePath)}</code> ` +
+            `(host filesystem access required).\n` +
             `⏱ Auto-deny in 120 seconds.`;
 
           try {
             await telegram.sendReply(challengeMsg, { broadcast: true });
           } catch {
             // Telegram send failed — fall through to deny
+            clearConfirmCodeFile(config.data_dir, codeFileName);
             return { content: [{ type: "text" as const, text: "Error: could not send bootstrap confirmation to Telegram. Ensure Telegram is configured." }], isError: true };
           }
 
@@ -684,6 +728,9 @@ async function main(): Promise<void> {
             telegram.onMessage(handler);
           });
 
+          // Single-use: always clear the code file after the wait completes
+          clearConfirmCodeFile(config.data_dir, codeFileName);
+
           if (!confirmed) {
             audit.log("POLICY_DENY", {
               meta: {
@@ -698,11 +745,11 @@ async function main(): Promise<void> {
 
           // Confirmation succeeded
           await telegram.sendReply("✅ Bootstrap confirmation verified. Registering first agent credential...", { broadcast: true }).catch(() => {});
-          console.log("[atlas] Bootstrap confirmation verified via Telegram.");
+          console.error("[atlas] Bootstrap confirmation verified via Telegram.");
         }
 
         if (isBootstrap && skipBootstrapConfirm) {
-          console.warn("[atlas] WARNING: Bootstrap confirmation skipped (ATLAS_BOOTSTRAP_SKIP_CONFIRM=true)");
+          console.error("[atlas] WARNING: Bootstrap confirmation skipped (ATLAS_BOOTSTRAP_SKIP_CONFIRM=true)");
           audit.log("CONFIG_LOADED", {
             meta: { event_detail: "BOOTSTRAP_CONFIRM_SKIPPED", warning: "Two-channel verification bypassed by env var" },
           });
@@ -995,14 +1042,19 @@ async function main(): Promise<void> {
           return { content: [{ type: "text" as const, text: "Error: reason is required" }], isError: true };
         }
 
-        // Require Telegram confirmation before activating (if Telegram is available)
+        // Require Telegram confirmation before activating (if Telegram is available).
+        // Same two-channel pattern as bootstrap: code goes to host (stderr +
+        // file), challenge goes to Telegram, operator must reply with the code.
         if (config.telegram_bot_token) {
           const bgConfirmCode = randomBytes(3).toString("hex").toUpperCase();
+          const bgCodeFileName = "break-glass-code.txt";
+          const bgCodeFilePath = writeConfirmCodeFile(config.data_dir, bgCodeFileName, bgConfirmCode);
 
-          console.log("");
-          console.log(`[atlas] BREAK-GLASS ACTIVATION CODE: ${bgConfirmCode}`);
-          console.log(`[atlas] Send this code via Telegram to confirm (120s timeout).`);
-          console.log("");
+          console.error("");
+          console.error(`[atlas] BREAK-GLASS ACTIVATION CODE: ${bgConfirmCode}`);
+          console.error(`[atlas] Code also written to: ${bgCodeFilePath} (mode 0600, single-use)`);
+          console.error(`[atlas] Send this code via Telegram to confirm (120s timeout).`);
+          console.error("");
 
           try {
             await telegram.sendReply(
@@ -1010,7 +1062,8 @@ async function main(): Promise<void> {
               `Reason: ${escapeHtml(bgReason)}\n` +
               `TTL: ${bgTtl} minutes\n` +
               `Max requests: ${bgMaxReq || "unlimited"}\n\n` +
-              `Reply with the 6-character code from the server console to confirm.`,
+              `Reply with the 6-character code from the server console ` +
+              `<b>or</b> read it from <code>${escapeHtml(bgCodeFilePath)}</code>.`,
               { broadcast: true }
             );
 
@@ -1029,25 +1082,29 @@ async function main(): Promise<void> {
               telegram.onMessage(handler);
             });
 
+            // Single-use: always clear the code file after the wait completes
+            clearConfirmCodeFile(config.data_dir, bgCodeFileName);
+
             if (!bgConfirmed) {
               return { content: [{ type: "text" as const, text: "Error: break-glass activation not confirmed. Code not matched within 120 seconds." }], isError: true };
             }
           } catch {
             // Telegram send failed — this is the exact scenario break-glass is for.
             // Allow activation without Telegram confirmation if Telegram is down.
-            console.warn("[atlas] Telegram unreachable — activating break-glass without Telegram confirmation.");
+            clearConfirmCodeFile(config.data_dir, bgCodeFileName);
+            console.error("[atlas] Telegram unreachable — activating break-glass without Telegram confirmation.");
           }
         }
 
         const { token, secret } = breakGlass.create(bgReason, bgTtl, bgMaxReq);
 
-        console.log("");
-        console.log("╔══════════════════════════════════════════════════════╗");
-        console.log("║  BREAK-GLASS TOKEN ACTIVATED                        ║");
-        console.log(`║  Expires: ${token.expires_at}        ║`);
-        console.log(`║  Reason: ${bgReason.slice(0, 44).padEnd(44)}║`);
-        console.log("╚══════════════════════════════════════════════════════╝");
-        console.log("");
+        console.error("");
+        console.error("╔══════════════════════════════════════════════════════╗");
+        console.error("║  BREAK-GLASS TOKEN ACTIVATED                        ║");
+        console.error(`║  Expires: ${token.expires_at}        ║`);
+        console.error(`║  Reason: ${bgReason.slice(0, 44).padEnd(44)}║`);
+        console.error("╚══════════════════════════════════════════════════════╝");
+        console.error("");
 
         audit.log("CONFIG_LOADED", {
           meta: {
@@ -1382,7 +1439,7 @@ async function main(): Promise<void> {
       try {
         const rotResult = auditRotation.rotate();
         if (rotResult) {
-          console.log(`[atlas] Audit log rotated: ${rotResult.record.rotated_name} (${rotResult.record.entry_count} entries, ${(rotResult.record.size_bytes / 1024 / 1024).toFixed(1)}MB)`);
+          console.error(`[atlas] Audit log rotated: ${rotResult.record.rotated_name} (${rotResult.record.entry_count} entries, ${(rotResult.record.size_bytes / 1024 / 1024).toFixed(1)}MB)`);
           // The AuditLogger will naturally start a new chain — its prevHash
           // will be computed from the last entry it wrote (before the file was moved).
           // The new file's first entry will reference the old chain via prev_hash.
