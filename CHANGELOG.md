@@ -4,6 +4,35 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-29
+
+Honest 1.0 follow-up: version map frozen, CI added, issuer key rotation
+implemented per SPEC §4.5, proximity handshake uses real X25519, and
+ProximityMesh is labeled research/demo until hardware is validated.
+
+### Added
+- **Issuer key rotation (SPEC §4.5).** `atlas_key_rotate` generates a new
+  ML-DSA-65 issuer key, logs a `KEY_ROTATION` audit entry signed by the old
+  key, re-issues all active credentials with the new key, and retains the
+  last 3 public keys so historical audit signatures still verify.
+- **GitHub Actions CI** — `npm test` + `npm run build` on Node 20 and 22,
+  plus the DIDComm adapter suite.
+- **Version map** in README and SPEC §11.2: spec document / implementation /
+  protocol wire / credential schema are now named separately.
+
+### Changed
+- **Proximity handshake uses real X25519 ECDH** instead of hash-simulated DH.
+  Transport remains AES-256-GCM; this is an IK/KK *key-use pattern*, not a
+  byte-compatible Noise_IK handshake. Protocol name:
+  `Atlas_X25519_AESGCM_SHA256`.
+- **SESSION_START** now records `protocol_version` (0.8.4) and `spec_version`
+  alongside the implementation `version`.
+- ProximityMesh marketplace plugin and README limitations now state that
+  hardware adapters are untested reference drivers.
+- SPEC.md document version 1.0.0 → **1.0.1** (editorial + implemented
+  rotation; protocol wire version remains 0.8.4). The 1.0.0 changelog said
+  the spec was a Release Candidate; the document status was already Published.
+
 ### Fixed
 - **Bootstrap & break-glass confirmation now reachable under stdio MCP transport.**
   Previously the 6-character confirmation code was written to `stdout` via
@@ -19,6 +48,18 @@ All notable changes to Atlas Protocol are documented in this file.
   Telegram.
 - All `console.log` calls in `src/index.ts` migrated to `console.error` to
   prevent any future stdout pollution of the MCP JSON-RPC stream.
+- Runtime `VERSION` constant (`src/index.ts`) was still `1.0.0` after the
+  1.0.1 package bump; now tracks the implementation version.
+- README architecture tree claimed 20 tools / 96 rules; swarm demo said
+  96-rule; RELEASE_CHECKLIST said 575 tests.
+- SPEC §4.1 linked a non-existent GitHub issue for federation tracking.
+- Android adapter error pointed at a missing `examples/android/` directory.
+
+## [1.0.1] - 2026-03-30
+
+Marketplace submission prep: `manifest_version` 0.2, privacy policy URLs,
+MCP tool annotations. Package version was bumped; the runtime `VERSION`
+constant was not (fixed in 1.0.2).
 
 ## [1.0.0] - 2026-03-29
 

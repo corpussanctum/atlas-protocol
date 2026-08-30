@@ -9,6 +9,12 @@
  *   - Keypair auto-generated on first run and stored in the data directory
  *   - Public key hash logged at session start for key pinning
  *   - Private key never leaves the data directory
+ *   - Rotation (SPEC §4.5): generate new key, log KEY_ROTATION signed by the
+ *     old key, archive old public keys (last 3) for historical verification
+ *
+ * Hashing:
+ *   - `public_key_hash` is SHA-256 (stable SESSION_START pinning field)
+ *   - KEY_ROTATION `old_key_hash` / `new_key_hash` are SHA3-256 per SPEC §4.5
  *
  * Dependency: @noble/post-quantum (pure JS, no native bindings)
  * Graceful degradation: if the library is unavailable, signing is skipped
@@ -36,7 +42,59 @@ export interface QuantumSignerStatus {
   available: boolean;
   algorithm: string | null;
   public_key_hash: string | null;
+  public_key_hash_sha3: string | null;
   key_path: string | null;
+  archived_key_count: number;
+}
+
+/** Archived issuer public key retained for historical audit verification. */
+export interface ArchivedPublicKey {
+  public_key_b64: string;
+  /** SHA-256 of the public key (matches SESSION_START pq_public_key_hash). */
+  public_key_hash: string;
+  /** SHA3-256 of the public key (SPEC §4.5 KEY_ROTATION hashes). */
+  public_key_hash_sha3: string;
+  created_at: string;
+  archived_at: string;
+}
+
+/**
+ * A newly generated keypair that has not yet been activated.
+ * Sign KEY_ROTATION with the current (old) key, re-issue credentials with
+ * `newSecretKey`, then call `commitRotation`.
+ */
+export interface PreparedRotation {
+  oldKeyHash: string;
+  oldKeyHashSha3: string;
+  newKeyHash: string;
+  newKeyHashSha3: string;
+  newPublicKeyB64: string;
+  newPublicKey: Uint8Array;
+  newSecretKey: Uint8Array;
+  effectiveAt: string;
+}
+
+const MAX_ARCHIVED_KEYS = 3;
+
+function sha256Hex(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+function sha3Hex(data: Uint8Array): string {
+  return createHash("sha3-256").update(data).digest("hex");
+}
+
+function writeRestricted(path: string, contents: string): void {
+  const dir = dirname(path);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(path, contents, "utf-8");
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // Non-fatal — may not have permission to chmod on some systems
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +116,11 @@ export class QuantumSigner {
   private publicKey: Uint8Array | null = null;
   private secretKey: Uint8Array | null = null;
   private publicKeyHash: string | null = null;
+  private publicKeyHashSha3: string | null = null;
+  private keyCreatedAt: string | null = null;
   private keyPath: string | null = null;
+  private archivePath: string | null = null;
+  private archivedPublicKeys: ArchivedPublicKey[] = [];
   private _available = false;
 
   get available(): boolean {
@@ -91,7 +153,9 @@ export class QuantumSigner {
 
     // Load or generate keypair
     this.keyPath = join(dataDir, "quantum-keypair.json");
+    this.archivePath = join(dataDir, "quantum-key-archive.json");
     this.loadOrGenerateKeypair();
+    this.loadArchive();
     this._available = true;
   }
 
@@ -103,7 +167,9 @@ export class QuantumSigner {
         const raw: QuantumKeypair = JSON.parse(readFileSync(this.keyPath, "utf-8"));
         this.publicKey = Buffer.from(raw.public_key_b64, "base64");
         this.secretKey = Buffer.from(raw.secret_key_b64, "base64");
-        this.publicKeyHash = raw.public_key_hash;
+        this.publicKeyHash = raw.public_key_hash || sha256Hex(this.publicKey);
+        this.publicKeyHashSha3 = sha3Hex(this.publicKey);
+        this.keyCreatedAt = raw.created_at ?? null;
         return;
       } catch {
         console.error("[atlas] WARNING: corrupt quantum keypair file, regenerating");
@@ -116,34 +182,52 @@ export class QuantumSigner {
 
     this.publicKey = publicKey;
     this.secretKey = secretKey;
-    this.publicKeyHash = createHash("sha256").update(publicKey).digest("hex");
+    this.publicKeyHash = sha256Hex(publicKey);
+    this.publicKeyHashSha3 = sha3Hex(publicKey);
+    this.keyCreatedAt = new Date().toISOString();
+
+    this.persistCurrentKeypair();
+
+    console.error(
+      `[atlas] Generated ML-DSA-65 keypair — public key hash: ${this.publicKeyHash.slice(0, 16)}...`
+    );
+  }
+
+  private persistCurrentKeypair(): void {
+    if (!this.keyPath || !this.publicKey || !this.secretKey || !this.publicKeyHash) return;
 
     const keypair: QuantumKeypair = {
       algorithm: "ML-DSA-65",
       nist_standard: "FIPS 204",
-      public_key_b64: Buffer.from(publicKey).toString("base64"),
-      secret_key_b64: Buffer.from(secretKey).toString("base64"),
+      public_key_b64: Buffer.from(this.publicKey).toString("base64"),
+      secret_key_b64: Buffer.from(this.secretKey).toString("base64"),
       public_key_hash: this.publicKeyHash,
-      created_at: new Date().toISOString(),
+      created_at: this.keyCreatedAt ?? new Date().toISOString(),
     };
 
-    // Ensure directory exists
-    const dir = dirname(this.keyPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+    writeRestricted(this.keyPath, JSON.stringify(keypair, null, 2));
+  }
+
+  private loadArchive(): void {
+    if (!this.archivePath || !existsSync(this.archivePath)) {
+      this.archivedPublicKeys = [];
+      return;
     }
-
-    writeFileSync(this.keyPath, JSON.stringify(keypair, null, 2), "utf-8");
-
-    // Restrict permissions: owner read/write only
     try {
-      chmodSync(this.keyPath, 0o600);
+      const raw = JSON.parse(readFileSync(this.archivePath, "utf-8"));
+      const keys: ArchivedPublicKey[] = Array.isArray(raw?.keys) ? raw.keys : [];
+      this.archivedPublicKeys = keys.slice(0, MAX_ARCHIVED_KEYS);
     } catch {
-      // Non-fatal — may not have permission to chmod on some systems
+      console.error("[atlas] WARNING: corrupt quantum key archive, starting empty");
+      this.archivedPublicKeys = [];
     }
+  }
 
-    console.error(
-      `[atlas] Generated ML-DSA-65 keypair — public key hash: ${this.publicKeyHash.slice(0, 16)}...`
+  private persistArchive(): void {
+    if (!this.archivePath) return;
+    writeRestricted(
+      this.archivePath,
+      JSON.stringify({ keys: this.archivedPublicKeys }, null, 2)
     );
   }
 
@@ -162,10 +246,19 @@ export class QuantumSigner {
    * or if verification is not available.
    */
   verify(payload: Buffer, signatureB64: string): boolean {
-    if (!this._available || !this.ml_dsa65 || !this.publicKey) return false;
+    if (!this._available || !this.ml_dsa65) return false;
     try {
-      const sig = Buffer.from(signatureB64, "base64");
-      return this.ml_dsa65.verify(this.publicKey, new Uint8Array(payload), new Uint8Array(sig));
+      const sig = new Uint8Array(Buffer.from(signatureB64, "base64"));
+      const msg = new Uint8Array(payload);
+      if (this.publicKey && this.ml_dsa65.verify(this.publicKey, msg, sig)) {
+        return true;
+      }
+      // SPEC §4.5: historical entries verify against retained old public keys
+      for (const archived of this.archivedPublicKeys) {
+        const pk = new Uint8Array(Buffer.from(archived.public_key_b64, "base64"));
+        if (this.ml_dsa65.verify(pk, msg, sig)) return true;
+      }
+      return false;
     } catch {
       return false;
     }
@@ -179,6 +272,79 @@ export class QuantumSigner {
   }
 
   /**
+   * SHA3-256 hash of the current public key (SPEC §4.5 KEY_ROTATION hashes).
+   */
+  getPublicKeyHashSha3(): string | null {
+    return this.publicKeyHashSha3;
+  }
+
+  /**
+   * Retained old issuer public keys (most recent first, max 3).
+   */
+  getArchivedPublicKeys(): ArchivedPublicKey[] {
+    return [...this.archivedPublicKeys];
+  }
+
+  /**
+   * Generate a new ML-DSA-65 keypair without activating it.
+   * Sign the KEY_ROTATION audit entry with the current key, re-issue
+   * credentials with `prepared.newSecretKey`, then `commitRotation`.
+   */
+  beginRotation(): PreparedRotation {
+    if (!this._available || !this.ml_dsa65 || !this.publicKey || !this.secretKey) {
+      throw new Error("Cannot rotate — quantum signer is not available");
+    }
+    if (!this.publicKeyHash || !this.publicKeyHashSha3) {
+      throw new Error("Cannot rotate — current public key hash unavailable");
+    }
+
+    const seed = randomBytes(32);
+    const { publicKey, secretKey } = this.ml_dsa65.keygen(seed);
+
+    return {
+      oldKeyHash: this.publicKeyHash,
+      oldKeyHashSha3: this.publicKeyHashSha3,
+      newKeyHash: sha256Hex(publicKey),
+      newKeyHashSha3: sha3Hex(publicKey),
+      newPublicKeyB64: Buffer.from(publicKey).toString("base64"),
+      newPublicKey: publicKey,
+      newSecretKey: secretKey,
+      effectiveAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Activate a prepared rotation: archive the old public key (keep last 3),
+   * switch signing to the new keypair, persist both files.
+   */
+  commitRotation(prepared: PreparedRotation): void {
+    if (!this.publicKey || !this.publicKeyHash) {
+      throw new Error("Cannot commit rotation — no current keypair");
+    }
+
+    const archived: ArchivedPublicKey = {
+      public_key_b64: Buffer.from(this.publicKey).toString("base64"),
+      public_key_hash: this.publicKeyHash,
+      public_key_hash_sha3: this.publicKeyHashSha3 ?? sha3Hex(this.publicKey),
+      created_at: this.keyCreatedAt ?? new Date().toISOString(),
+      archived_at: prepared.effectiveAt,
+    };
+    this.archivedPublicKeys = [archived, ...this.archivedPublicKeys].slice(0, MAX_ARCHIVED_KEYS);
+    this.persistArchive();
+
+    this.publicKey = prepared.newPublicKey;
+    this.secretKey = prepared.newSecretKey;
+    this.publicKeyHash = prepared.newKeyHash;
+    this.publicKeyHashSha3 = prepared.newKeyHashSha3;
+    this.keyCreatedAt = prepared.effectiveAt;
+    this.persistCurrentKeypair();
+
+    console.error(
+      `[atlas] ML-DSA-65 key rotated — new public key hash: ${this.publicKeyHash.slice(0, 16)}...`
+    );
+  }
+
+  /**
    * Get runtime status for the atlas_status tool.
    */
   getStatus(): QuantumSignerStatus {
@@ -186,7 +352,9 @@ export class QuantumSigner {
       available: this._available,
       algorithm: this._available ? "ML-DSA-65" : null,
       public_key_hash: this.publicKeyHash,
+      public_key_hash_sha3: this.publicKeyHashSha3,
       key_path: this.keyPath,
+      archived_key_count: this.archivedPublicKeys.length,
     };
   }
 
@@ -212,6 +380,7 @@ export class QuantumSigner {
   loadPublicKey(publicKeyB64: string): void {
     if (!this.ml_dsa65) return;
     this.publicKey = Buffer.from(publicKeyB64, "base64");
-    this.publicKeyHash = createHash("sha256").update(this.publicKey).digest("hex");
+    this.publicKeyHash = sha256Hex(this.publicKey);
+    this.publicKeyHashSha3 = sha3Hex(this.publicKey);
   }
 }

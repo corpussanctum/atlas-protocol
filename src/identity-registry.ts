@@ -26,6 +26,7 @@ import {
   delegateCredentialWithKey,
   isDelegatedCredential,
   cascadeRevoke as cascadeRevokeFn,
+  reissueCredential,
 } from "./agent-identity.js";
 import type {
   AgentCredential,
@@ -291,6 +292,43 @@ export class IdentityRegistry {
 
     this.save();
     return revoked;
+  }
+
+  /**
+   * Reload issuer keys from the QuantumSigner. Call after key rotation
+   * so subsequent issue/verify operations use the new key.
+   */
+  syncIssuerKeys(): void {
+    this.issuerSecretKey = this.signer.getSecretKeyRaw();
+    this.issuerPublicKey = this.signer.getPublicKeyRaw();
+  }
+
+  /**
+   * Re-sign all active (unrevoked, unexpired) credentials with the given
+   * issuer secret key. Used during SPEC §4.5 key rotation. Returns counts;
+   * failed credentials are left unchanged.
+   */
+  reissueAllActive(issuerSecretKey: Uint8Array): {
+    reissued: number;
+    failed: number;
+    failedIds: string[];
+  } {
+    const active = this.list("active");
+    let reissued = 0;
+    const failedIds: string[] = [];
+
+    for (const cred of active) {
+      try {
+        const updated = reissueCredential(cred, issuerSecretKey);
+        this.credentials.set(updated.agentId, updated);
+        reissued++;
+      } catch {
+        failedIds.push(cred.agentId);
+      }
+    }
+
+    this.save();
+    return { reissued, failed: failedIds.length, failedIds };
   }
 
   /**

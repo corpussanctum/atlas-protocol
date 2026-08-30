@@ -172,18 +172,18 @@ export interface NoiseSession {
   close(): Promise<void>;
 }
 
-/** Configuration for a Noise handshake */
+/** Configuration for a proximity handshake (X25519 ECDH, IK/KK key-use pattern) */
 export interface NoiseHandshakeConfig {
-  /** Local agent's static ML-DSA-65 public key */
+  /** Local agent's static public key (ML-DSA-65; identity, not used for DH) */
   localStaticPublicKey: Uint8Array;
-  /** Local agent's static ML-DSA-65 secret key */
+  /** Local agent's static secret key (ML-DSA-65; identity, not used for DH) */
   localStaticSecretKey: Uint8Array;
   /** Local ephemeral X25519 keypair (generated per-handshake) */
   localEphemeralPublicKey: Uint8Array;
   localEphemeralSecretKey: Uint8Array;
   /** Remote agent's static public key (for IK pattern, known in advance) */
   remoteStaticPublicKey?: Uint8Array;
-  /** Remote agent's ephemeral public key (from BLE advertisement) */
+  /** Remote agent's ephemeral X25519 public key (from BLE advertisement) */
   remoteEphemeralPublicKey: Uint8Array;
   /** Additional data to bind into the handshake (proximity proof) */
   additionalData?: Uint8Array;

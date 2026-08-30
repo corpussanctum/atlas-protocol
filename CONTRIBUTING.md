@@ -8,7 +8,7 @@ Thanks for your interest in Atlas Protocol. This guide covers the most common co
 git clone https://github.com/corpussanctum/atlas-protocol.git
 cd atlas-protocol
 npm install && npm run build
-npm test  # 614 tests should pass
+npm test  # core suite should pass
 ```
 
 ## Contributing Policy Rules

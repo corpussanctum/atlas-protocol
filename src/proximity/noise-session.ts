@@ -1,22 +1,31 @@
 /**
- * Atlas Protocol — Noise Protocol Session
+ * Atlas Protocol — Proximity session crypto
  *
- * Implements a simplified Noise Protocol Framework session for encrypted
- * agent-to-agent communication over UWB data channels. Uses the IK pattern
- * (initiator knows responder's static key) or KK pattern (both know each
- * other's static keys, for pre-paired agents).
+ * Encrypted agent-to-agent channel for the ProximityMesh profile (SPEC §13.4).
  *
- * The proximity proof is bound into the handshake as Additional Data (AD),
- * cryptographically linking physical proximity to the encrypted session.
+ * This is an X25519 ECDH + HKDF-SHA256 + AES-256-GCM construction that follows
+ * the IK/KK *key-use pattern* (ephemeral DH, static identity mixed into the
+ * KDF). It is NOT a byte-compatible Noise_IK_25519_ChaChaPoly_SHA256 handshake:
+ * static keys presented by the mesh are ML-DSA-65 (not X25519), so they are
+ * bound as KDF context rather than used for DH.
  *
- * In production, this would use a full Noise implementation (e.g. noise-protocol
- * or @stablelib/noise). This implementation provides the correct protocol flow
- * and type contracts using Node.js crypto primitives.
+ * The proximity proof is mixed into HKDF as additional data, cryptographically
+ * linking physical proximity to the session keys.
  *
  * Spec reference: SPEC.md § 13.4 (Secure channel establishment flow)
  */
 
-import { createHash, createCipheriv, createDecipheriv, randomBytes, randomUUID, createHmac } from "node:crypto";
+import {
+  createHash,
+  createCipheriv,
+  createDecipheriv,
+  generateKeyPairSync,
+  diffieHellman,
+  createPrivateKey,
+  createPublicKey,
+  randomUUID,
+  createHmac,
+} from "node:crypto";
 import type {
   NoiseSession,
   NoiseSessionState,
@@ -28,11 +37,16 @@ import type {
 // Constants
 // ---------------------------------------------------------------------------
 
-const NOISE_PROTOCOL_NAME = "Noise_IK_25519_ChaChaPoly_SHA256";
+const PROTOCOL_NAME = "Atlas_X25519_AESGCM_SHA256";
 const SESSION_DEFAULT_TTL_HOURS = 1;
 const NONCE_LENGTH = 12;
 const KEY_LENGTH = 32;
 const TAG_LENGTH = 16;
+const X25519_KEY_LENGTH = 32;
+
+// PKCS#8 / SPKI DER prefixes for raw 32-byte X25519 keys (RFC 8410).
+const X25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b656e04220420", "hex");
+const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
 
 // ---------------------------------------------------------------------------
 // HKDF (for deriving session keys from handshake output)
@@ -77,10 +91,39 @@ interface DerivedKeys {
   sessionHash: string;
 }
 
+function x25519PrivateFromRaw(raw: Uint8Array) {
+  if (raw.length !== X25519_KEY_LENGTH) {
+    throw new Error(`X25519 secret key must be ${X25519_KEY_LENGTH} bytes`);
+  }
+  return createPrivateKey({
+    key: Buffer.concat([X25519_PKCS8_PREFIX, Buffer.from(raw)]),
+    format: "der",
+    type: "pkcs8",
+  });
+}
+
+function x25519PublicFromRaw(raw: Uint8Array) {
+  if (raw.length !== X25519_KEY_LENGTH) {
+    throw new Error(`X25519 public key must be ${X25519_KEY_LENGTH} bytes`);
+  }
+  return createPublicKey({
+    key: Buffer.concat([X25519_SPKI_PREFIX, Buffer.from(raw)]),
+    format: "der",
+    type: "spki",
+  });
+}
+
+function x25519Dh(localSecret: Uint8Array, remotePublic: Uint8Array): Buffer {
+  return diffieHellman({
+    privateKey: x25519PrivateFromRaw(localSecret),
+    publicKey: x25519PublicFromRaw(remotePublic),
+  });
+}
+
 /**
- * Derive symmetric session keys from the handshake material.
- * The proximity proof is mixed into the derivation as additional context,
- * binding the physical proximity attestation to the encrypted channel.
+ * Derive symmetric session keys from a real X25519 shared secret.
+ * The proximity proof is mixed into HKDF so the transport keys are bound
+ * to physical proximity.
  */
 function deriveSessionKeys(
   localEphemeralSecret: Uint8Array,
@@ -88,27 +131,17 @@ function deriveSessionKeys(
   additionalData: Uint8Array | undefined,
   isInitiator: boolean,
 ): DerivedKeys {
-  // Simulate DH by hashing the shared material in canonical order.
-  // In production, this would be X25519(localSecret, remotePub) which
-  // yields the same shared secret on both sides. Here we sort the public
-  // keys lexicographically so both sides derive identical key material.
-  const localPub = createHash("sha256").update(Buffer.from(localEphemeralSecret)).digest();
-  const remotePub = Buffer.from(remoteEphemeralPublic);
-  const [first, second] = Buffer.compare(localPub, remotePub) <= 0
-    ? [localPub, remotePub]
-    : [remotePub, localPub];
-  const dhInput = Buffer.concat([first, second]);
+  const sharedSecret = x25519Dh(localEphemeralSecret, remoteEphemeralPublic);
 
   const salt = createHash("sha256")
-    .update(NOISE_PROTOCOL_NAME)
+    .update(PROTOCOL_NAME)
     .digest();
 
-  // Mix in additional data (proximity proof) if present
-  const info = additionalData
+  const info = additionalData && additionalData.length > 0
     ? Buffer.concat([Buffer.from("atlas-proximity-session"), Buffer.from(additionalData)])
     : Buffer.from("atlas-proximity-session");
 
-  const keyMaterial = hkdfDerive(dhInput, salt, info, KEY_LENGTH * 2);
+  const keyMaterial = hkdfDerive(sharedSecret, salt, info, KEY_LENGTH * 2);
 
   const key1 = keyMaterial.subarray(0, KEY_LENGTH);
   const key2 = keyMaterial.subarray(KEY_LENGTH, KEY_LENGTH * 2);
@@ -276,20 +309,18 @@ export function respondNoiseHandshake(
 }
 
 /**
- * Generate an ephemeral X25519 keypair for the Noise handshake.
- * In production, use actual X25519. Here we use random bytes as a stand-in
- * since the real DH is handled by the Noise library.
+ * Generate an ephemeral X25519 keypair for the proximity handshake.
+ * Returns raw 32-byte keys suitable for BLE advertisement payloads.
  */
 export function generateEphemeralKeypair(): {
   publicKey: Uint8Array;
   secretKey: Uint8Array;
 } {
-  const secretKey = randomBytes(32);
-  // In production: X25519 scalar multiplication
-  // For now: derive public key as hash of secret (deterministic, one-way)
-  const publicKey = createHash("sha256").update(secretKey).digest();
+  const { publicKey, privateKey } = generateKeyPairSync("x25519");
+  const pubDer = publicKey.export({ type: "spki", format: "der" }) as Buffer;
+  const secDer = privateKey.export({ type: "pkcs8", format: "der" }) as Buffer;
   return {
-    publicKey: new Uint8Array(publicKey),
-    secretKey: new Uint8Array(secretKey),
+    publicKey: new Uint8Array(pubDer.subarray(pubDer.length - X25519_KEY_LENGTH)),
+    secretKey: new Uint8Array(secDer.subarray(secDer.length - X25519_KEY_LENGTH)),
   };
 }

@@ -10,6 +10,17 @@ Atlas is designed around a single assumption: **the agent might be compromised**
 
 > **Spec vs Implementation:** This README documents the reference implementation. For the normative protocol specification (conformance profiles, MUST/SHOULD requirements, DID method, delegation signing semantics), see **[SPEC.md](SPEC.md)**.
 
+### Version map
+
+These four identifiers are independent. Do not treat them as interchangeable.
+
+| Identifier | Current value | Meaning |
+|---|---|---|
+| **Implementation** | `1.0.2` | This repository / npm package / `atlas_status.version` |
+| **Spec document** | `1.0.1` | `SPEC.md` header |
+| **Protocol (wire)** | `0.8.4` | Delegation authority, `SESSION_START.meta.protocol_version`, Why Layer provenance |
+| **Credential schema** | `0.5.0` | `AgentCredential.version` |
+
 ## How it works
 
 ```
@@ -59,7 +70,7 @@ When an agent requests permission to use a tool:
 /plugin install atlas-gatekeeper@atlas-protocol
 ```
 
-After install, Claude Code automatically discovers all 25 Atlas MCP tools (identity, policy, audit, proximity) and prompts for Telegram configuration.
+After install, Claude Code automatically discovers all 26 Atlas MCP tools (identity, policy, audit, proximity) and prompts for Telegram configuration.
 
 ### Local development
 
@@ -78,7 +89,7 @@ Try Atlas without configuring Telegram or Ollama:
 git clone https://github.com/corpussanctum/atlas-protocol.git
 cd atlas-protocol
 npm install && npm run build
-npm test                          # 614 tests — see it work
+npm test                          # see Testing below
 ```
 
 To explore the ProximityMesh agent swarm demo (no hardware needed):
@@ -155,9 +166,13 @@ Orchestrator agents can issue scoped sub-credentials to child agents. Delegation
 - Chain signatures (ML-DSA-65) bind root -> parent -> child cryptographically
 - **Cascade revocation** — revoking a parent revokes all descendants
 
+### Issuer key rotation
+
+`atlas_key_rotate` implements SPEC §4.5: generate a new ML-DSA-65 issuer key, log `KEY_ROTATION` signed by the old key, re-issue all active credentials, and retain the last 3 public keys so historical audit signatures still verify. Requires `identity:register` or `admin` once the registry is non-empty.
+
 ### Bootstrap guard
 
-On first run (empty registry), Atlas allows requests through unverified so the system is not self-locking. The first credential registration requires **two-channel confirmation**: a 6-character code is printed to the server console and must be sent via Telegram by the operator. This proves physical host access + Telegram access simultaneously, preventing a compromised agent from registering a malicious admin credential during the bootstrap window.
+On first run (empty registry), Atlas allows requests through unverified so the system is not self-locking. The first credential registration requires **two-channel confirmation**: a 6-character code is written to STDERR and to `<data_dir>/bootstrap-code.txt` (mode 0600, single-use) and must be sent via Telegram by the operator. This proves host access (terminal or filesystem) + Telegram access simultaneously, preventing a compromised agent from registering a malicious admin credential during the bootstrap window. The code is never sent over Telegram.
 
 Once the first credential is registered, identity enforcement activates. Set `ATLAS_BOOTSTRAP_SKIP_CONFIRM=true` to bypass confirmation in dev/testing environments.
 
@@ -306,7 +321,7 @@ Drift signals are included in the Why Layer assessment, enriched into the audit 
 
 ## MCP tools
 
-Atlas exposes 25 MCP tools to the Claude Code session:
+Atlas exposes 26 MCP tools to the Claude Code session:
 
 ### Core
 
@@ -332,6 +347,7 @@ Atlas exposes 25 MCP tools to the Claude Code session:
 | `atlas_identity_delegate` | Issue a scoped child credential from a parent |
 | `atlas_identity_cascade_revoke` | Revoke a parent and all its descendants |
 | `atlas_identity_tree` | View the credential delegation hierarchy |
+| `atlas_key_rotate` | Rotate the ML-DSA-65 issuer key; re-issue active credentials (SPEC §4.5) |
 
 ### Why Layer and baselines
 
@@ -363,7 +379,9 @@ Atlas exposes 25 MCP tools to the Claude Code session:
 | `atlas_audit_rotate` | Manually trigger audit log rotation |
 | `atlas_audit_archives` | List or verify archived audit log files |
 
-### Proximity mesh
+### Proximity mesh (research / demo)
+
+Hardware adapters are untested reference drivers. Use the mock drivers or the Docker swarm demo unless you have validated UWB hardware.
 
 | Tool | Description |
 |---|---|
@@ -457,8 +475,8 @@ See [`packages/atlas-didcomm-adapter/README.md`](packages/atlas-didcomm-adapter/
 
 ```
 src/
-├── index.ts               # MCP server, 20 tools, permission handler (5-step pipeline)
-├── config.ts              # Configuration loader + 96 default rules
+├── index.ts               # MCP server, 26 tools, permission handler (5-step pipeline)
+├── config.ts              # Configuration loader + 97 default rules
 ├── policy-engine.ts       # 97 rules, anomaly detection, velocity tracking
 ├── policy-test-runner.ts  # Runtime regression test fixtures + runner
 ├── audit-log.ts           # SHA3-256 chain + ML-DSA-65 + HMAC + identity fields
@@ -480,7 +498,7 @@ src/
 └── proximity/             # ProximityMesh profile (SPEC § 13)
     ├── types.ts           # UWB/BLE/NFC driver interfaces, proof types, mesh session
     ├── attestation.ts     # ML-DSA-65 signed proximity proofs (UWB ToF + BLE RSSI)
-    ├── noise-session.ts   # Noise Protocol (IK/KK) sessions, AES-256-GCM encryption
+    ├── noise-session.ts   # X25519 ECDH + AES-256-GCM sessions (IK/KK key-use pattern)
     ├── hardware.ts        # Mock drivers for testing
     ├── mesh.ts            # 7-step mesh orchestrator (discovery → session → audit)
     ├── index.ts           # Public API + env config loader
@@ -521,13 +539,13 @@ This launches a complete 3-agent music swarm (orchestrator + renderer + mixer) w
 
 - Simulated UWB ranging + proximity proofs
 - Full ML-DSA-65 credential exchange over DIDComm
-- Local 96-rule policy evaluation
+- Local 97-rule policy evaluation
 - Distance-aware task delegation (e.g., "apply reverb based on 2.4 m distance")
 - Live quantum audit trail streaming to console
 
 Press `Ctrl+C` to shut down cleanly.
 
-> **Want real hardware?** Just set `ATLAS_HARDWARE_ADAPTER=raspberry-pi` (or `esp32-uart`) on your host and run the same command — the adapters auto-detect.
+> **Want real hardware?** Set `ATLAS_HARDWARE_ADAPTER=raspberry-pi` (or `esp32-uart`). Those adapters are untested reference drivers — do not assume production readiness without physical validation. The ESP32 companion firmware is not implemented.
 
 ## Usage Examples
 
@@ -555,13 +573,13 @@ has changed in the last 30 minutes.
 
 ```bash
 # Core gatekeeper
-npm run build && npm test  # 614 tests
+npm run build && npm test  # core suite
 
 # DIDComm adapter
 cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 ```
 
-**Core** (614 tests): policy rules, regression fixtures, audit integrity, audit rotation, quantum signing, identity lifecycle, credential delegation, attestation flow, Why Layer reasoning, trigger logic, baseline calculation, drift detection, break-glass mechanism, quiet mode eligibility, configuration loading, proximity attestation, mesh sessions, Noise Protocol, and hardware adapters.
+**Core**: policy rules, regression fixtures, audit integrity, audit rotation, quantum signing, issuer key rotation, identity lifecycle, credential delegation, attestation flow, Why Layer reasoning, trigger logic, baseline calculation, drift detection, break-glass mechanism, quiet mode eligibility, configuration loading, proximity attestation, mesh sessions, X25519 session crypto, and hardware adapters.
 
 **Adapter** (129 tests): peer pairing, classification, policy mapping, inbound/outbound enforcement, delegation scope enforcement, replay protection persistence, Credo-TS transport, and full orchestrator integration flow.
 
@@ -574,7 +592,8 @@ cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 - Behavioral baselines need ~10 sessions before drift detection produces meaningful signals (maturity model handles this).
 - Agent secret keys are held in-memory only for delegation support — they do not survive process restarts.
 - Quiet mode requires explicit opt-in (`ATLAS_QUIET_MODE=true`) and only affects read-only tools for mature agents.
-- ProximityMesh profile requires UWB hardware (or BLE fallback); mock drivers are included for development. Set `ATLAS_HARDWARE_ADAPTER=raspberry-pi|esp32-uart|android|ios` for real hardware.
+- ProximityMesh is a research/demo profile. Raspberry Pi and ESP32 adapters are untested reference drivers; iOS/Android are TypeScript stubs pending native modules; the ESP32 UART firmware is not implemented. Mock drivers are included for development.
+- Proximity session crypto is X25519 ECDH + HKDF-SHA256 + AES-256-GCM with proximity proof as additional data. It follows an IK/KK key-use pattern; it is not a byte-compatible Noise_IK handshake. ML-DSA-65 static keys are identity keys, not DH keys.
 
 ## Privacy
 

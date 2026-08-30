@@ -1,5 +1,5 @@
 /**
- * Tests for Atlas Protocol — Policy Engine (v0.2.1)
+ * Tests for Atlas Protocol — Policy Engine
  *
  * Covers: rule matching, glob matching, anomaly detection,
  * smuggling/obfuscation, PII heuristics, and identity-aware consent checks.

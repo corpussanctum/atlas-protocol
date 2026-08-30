@@ -25,7 +25,7 @@ import { bootAgentA, discoverAndConnect, delegateTask } from "./agent-a.js";
 import { bootAgentB } from "./agent-b.js";
 import { bootAgentC } from "./agent-c.js";
 import { MockBLEDriver } from "../../src/proximity/hardware.js";
-import { randomBytes } from "node:crypto";
+import { generateEphemeralKeypair } from "../../src/proximity/noise-session.js";
 
 async function main() {
   console.log("=== Atlas Protocol — Physical Swarm Demo ===\n");
@@ -64,7 +64,7 @@ async function main() {
       mockBle.addPeer({
         deviceId: "mock-agent-b",
         agentIdHash: ctxB.credential.agentId.slice(-16),
-        ephemeralPublicKey: randomBytes(32),
+        ephemeralPublicKey: generateEphemeralKeypair().publicKey,
         supportedMethods: ["uwb-sts"],
         maxRangeMeters: 10,
         estimatedDistanceMeters: 2.5,
@@ -73,7 +73,7 @@ async function main() {
       mockBle.addPeer({
         deviceId: "mock-agent-c",
         agentIdHash: ctxC.credential.agentId.slice(-16),
-        ephemeralPublicKey: randomBytes(32),
+        ephemeralPublicKey: generateEphemeralKeypair().publicKey,
         supportedMethods: ["uwb-sts"],
         maxRangeMeters: 10,
         estimatedDistanceMeters: 4.8,

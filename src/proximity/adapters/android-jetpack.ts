@@ -77,7 +77,7 @@ export class AndroidUWBDriver implements UWBDriver {
     } catch {
       throw new Error(
         "Android UWB requires React Native with the AtlasUWB native module. " +
-        "See atlas-protocol/examples/android/ for setup instructions."
+        "See the header of src/proximity/adapters/android-jetpack.ts for native module setup."
       );
     }
   }

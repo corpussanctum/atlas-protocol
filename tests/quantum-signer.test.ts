@@ -196,3 +196,81 @@ describe("QuantumSigner — public key loading", () => {
     assert.equal(valid, true, "Should verify with loaded public key");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Key rotation (SPEC §4.5)
+// ---------------------------------------------------------------------------
+
+describe("QuantumSigner — key rotation", () => {
+  it("rotates the keypair and verifies historical signatures against archived keys", async () => {
+    const dir = makeTempDir();
+    const signer = await QuantumSigner.create(dir);
+
+    const before = Buffer.from("signed before rotation");
+    const sigBefore = signer.sign(before)!;
+    const oldHash = signer.getPublicKeyHash();
+    const oldHashSha3 = signer.getPublicKeyHashSha3();
+
+    const prepared = signer.beginRotation();
+    assert.equal(prepared.oldKeyHash, oldHash);
+    assert.equal(prepared.oldKeyHashSha3, oldHashSha3);
+    assert.notEqual(prepared.newKeyHash, oldHash);
+    assert.equal(prepared.newKeyHashSha3.length, 64);
+
+    // Current key still signs until commit
+    assert.equal(signer.verify(before, sigBefore), true);
+
+    signer.commitRotation(prepared);
+    assert.equal(signer.getPublicKeyHash(), prepared.newKeyHash);
+    assert.equal(signer.getArchivedPublicKeys().length, 1);
+
+    const after = Buffer.from("signed after rotation");
+    const sigAfter = signer.sign(after)!;
+
+    assert.equal(signer.verify(after, sigAfter), true, "new key signs");
+    assert.equal(signer.verify(before, sigBefore), true, "old signatures still verify via archive");
+  });
+
+  it("persists the archive across process restarts", async () => {
+    const dir = makeTempDir();
+    const signer1 = await QuantumSigner.create(dir);
+    const payload = Buffer.from("survives restart");
+    const sig = signer1.sign(payload)!;
+
+    const prepared = signer1.beginRotation();
+    signer1.commitRotation(prepared);
+
+    const signer2 = await QuantumSigner.create(dir);
+    assert.equal(signer2.getPublicKeyHash(), prepared.newKeyHash);
+    assert.equal(signer2.getArchivedPublicKeys().length, 1);
+    assert.equal(signer2.verify(payload, sig), true);
+  });
+
+  it("retains at most 3 archived public keys", async () => {
+    const dir = makeTempDir();
+    const signer = await QuantumSigner.create(dir);
+    const firstPayload = Buffer.from("first generation");
+    const firstSig = signer.sign(firstPayload)!;
+
+    for (let i = 0; i < 4; i++) {
+      const prepared = signer.beginRotation();
+      signer.commitRotation(prepared);
+    }
+
+    assert.equal(signer.getArchivedPublicKeys().length, 3);
+    // The original key is beyond the 3-key window
+    assert.equal(signer.verify(firstPayload, firstSig), false);
+  });
+
+  it("status reports archived_key_count and sha3 hash", async () => {
+    const dir = makeTempDir();
+    const signer = await QuantumSigner.create(dir);
+    const prepared = signer.beginRotation();
+    signer.commitRotation(prepared);
+
+    const status = signer.getStatus();
+    assert.equal(status.archived_key_count, 1);
+    assert.ok(status.public_key_hash_sha3);
+    assert.equal(status.public_key_hash_sha3!.length, 64);
+  });
+});

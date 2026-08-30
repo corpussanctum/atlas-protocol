@@ -45,6 +45,7 @@ export type AuditEventType =
   | "CREDENTIAL_EXPIRED"
   | "CREDENTIAL_EXPIRY_WARNING"
   | "CHECKPOINT"
+  | "KEY_ROTATION"
   // Proximity Mesh events (SPEC § 13.4)
   | "PROXIMITY_DISCOVERY"
   | "PROXIMITY_RANGE"

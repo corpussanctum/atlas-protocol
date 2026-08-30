@@ -129,7 +129,7 @@ describe("Proximity Mesh — Noise session", () => {
     const responderKeys = generateEphemeralKeypair();
     const ad = Buffer.from("proximity-proof-data");
 
-    const { session: initiatorSession } = initiateNoiseHandshake(
+    const { session: initiatorSession, sessionHash: initHash } = initiateNoiseHandshake(
       "did:atlas:responder",
       {
         localStaticPublicKey: randomBytes(32),
@@ -142,7 +142,7 @@ describe("Proximity Mesh — Noise session", () => {
       },
     );
 
-    const { session: responderSession } = respondNoiseHandshake(
+    const { session: responderSession, sessionHash: respHash } = respondNoiseHandshake(
       "did:atlas:initiator",
       {
         localStaticPublicKey: randomBytes(32),
@@ -157,6 +157,7 @@ describe("Proximity Mesh — Noise session", () => {
 
     assert.equal(initiatorSession.state, "transport");
     assert.equal(responderSession.state, "transport");
+    assert.equal(initHash, respHash);
 
     // Encrypt with initiator, decrypt with responder
     const message = Buffer.from("Hello from Atlas mesh!");
@@ -164,6 +165,36 @@ describe("Proximity Mesh — Noise session", () => {
     const decrypted = await responderSession.decrypt(encrypted);
 
     assert.deepEqual(Buffer.from(decrypted), message);
+  });
+
+  it("derives identical session hashes from real X25519 DH", () => {
+    const initiatorKeys = generateEphemeralKeypair();
+    const responderKeys = generateEphemeralKeypair();
+    const ad = Buffer.from("shared-proximity-proof");
+
+    const { sessionHash: initHash } = initiateNoiseHandshake("did:atlas:r", {
+      localStaticPublicKey: new Uint8Array(0),
+      localStaticSecretKey: new Uint8Array(0),
+      localEphemeralPublicKey: initiatorKeys.publicKey,
+      localEphemeralSecretKey: initiatorKeys.secretKey,
+      remoteEphemeralPublicKey: responderKeys.publicKey,
+      additionalData: ad,
+      pattern: "IK",
+    });
+
+    const { sessionHash: respHash } = respondNoiseHandshake("did:atlas:i", {
+      localStaticPublicKey: new Uint8Array(0),
+      localStaticSecretKey: new Uint8Array(0),
+      localEphemeralPublicKey: responderKeys.publicKey,
+      localEphemeralSecretKey: responderKeys.secretKey,
+      remoteEphemeralPublicKey: initiatorKeys.publicKey,
+      additionalData: ad,
+      pattern: "IK",
+    });
+
+    assert.equal(initHash, respHash);
+    assert.equal(initiatorKeys.publicKey.length, 32);
+    assert.equal(initiatorKeys.secretKey.length, 32);
   });
 
   it("fails to decrypt with wrong keys", async () => {

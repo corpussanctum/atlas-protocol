@@ -46,10 +46,12 @@ import { runPolicyTests } from "./policy-test-runner.js";
 import { BreakGlassManager } from "./break-glass.js";
 import { AuditRotationManager } from "./audit-rotation.js";
 import { checkQuietEligibility, loadQuietConfig } from "./quiet-mode.js";
-import { ProximityMesh, loadProximityConfig, MockUWBDriver, MockBLEDriver, MockNFCDriver } from "./proximity/index.js";
+import { ProximityMesh, loadProximityConfig, MockUWBDriver, MockBLEDriver, MockNFCDriver, generateEphemeralKeypair } from "./proximity/index.js";
 import type { ProximityMeshConfig } from "./proximity/index.js";
+import { PROTOCOL_VERSION } from "./protocol-version.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.0.2";
+const SPEC_VERSION = "1.0.1";
 
 const VALID_ROLES: AgentRole[] = ["claude-code", "orchestrator", "tool-caller", "observer", "admin"];
 const VALID_CAPABILITIES: AgentCapability[] = [
@@ -163,6 +165,8 @@ async function main(): Promise<void> {
   audit.log("SESSION_START", {
     meta: {
       version: VERSION,
+      protocol_version: PROTOCOL_VERSION,
+      spec_version: SPEC_VERSION,
       telegram_configured: !!config.telegram_bot_token,
       allowed_chats: config.telegram_allowed_chat_ids.length,
       policy_rules: config.policy_rules.length,
@@ -362,6 +366,23 @@ async function main(): Promise<void> {
           required: ["agent_id"],
         },
         annotations: { readOnlyHint: true, destructiveHint: false },
+      },
+      {
+        name: "atlas_key_rotate",
+        description:
+          "Rotate the gatekeeper ML-DSA-65 issuer key (SPEC §4.5). Logs KEY_ROTATION signed by the old key, " +
+          "re-issues all active credentials with the new key, and retains the last 3 public keys for historical verification.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            reason: {
+              type: "string",
+              description: "Rotation reason (e.g. scheduled rotation, key compromise)",
+            },
+          },
+          required: ["reason"],
+        },
+        annotations: { readOnlyHint: false, destructiveHint: true },
       },
       // -- Baseline tools (v0.7.0) ---------------------------------------------
       {
@@ -579,6 +600,8 @@ async function main(): Promise<void> {
         const signerStatus = signer.getStatus();
         const status = {
           version: VERSION,
+          protocol_version: PROTOCOL_VERSION,
+          spec_version: SPEC_VERSION,
           telegram_connected: !!config.telegram_bot_token,
           channel_ready: !!config.telegram_bot_token && config.telegram_allowed_chat_ids.length > 0,
           allowed_chat_ids: config.telegram_allowed_chat_ids,
@@ -934,6 +957,83 @@ async function main(): Promise<void> {
             }, null, 2),
           }],
         };
+      }
+
+      case "atlas_key_rotate": {
+        const rotateReason = typeof args?.reason === "string" ? args.reason.trim() : "";
+        if (!rotateReason) {
+          return { content: [{ type: "text" as const, text: "Error: reason is required" }], isError: true };
+        }
+        if (!signer.available) {
+          return { content: [{ type: "text" as const, text: "Error: quantum signer is not available" }], isError: true };
+        }
+        if (!registry.isEmpty()) {
+          if (!sessionAgentId) {
+            return { content: [{ type: "text" as const, text: "Error: no active agent — register an identity first" }], isError: true };
+          }
+          const callerCred = registry.get(sessionAgentId);
+          if (!callerCred || (!callerCred.capabilities.includes("identity:register") && callerCred.role !== "admin")) {
+            return { content: [{ type: "text" as const, text: "Error: active agent lacks identity:register capability or admin role" }], isError: true };
+          }
+        }
+
+        try {
+          const prepared = signer.beginRotation();
+          const reissue = registry.reissueAllActive(prepared.newSecretKey);
+
+          audit.log("KEY_ROTATION", {
+            meta: {
+              old_key_hash: prepared.oldKeyHashSha3,
+              new_key_hash: prepared.newKeyHashSha3,
+              new_public_key_b64: prepared.newPublicKeyB64,
+              effective_at: prepared.effectiveAt,
+              reason: rotateReason,
+              credentials_reissued: reissue.reissued,
+              reissue_success: reissue.failed === 0,
+              ...(reissue.failed > 0 ? { reissue_failed_ids: reissue.failedIds } : {}),
+            },
+          });
+
+          signer.commitRotation(prepared);
+          registry.syncIssuerKeys();
+
+          audit.log("SESSION_START", {
+            meta: {
+              version: VERSION,
+              protocol_version: PROTOCOL_VERSION,
+              spec_version: SPEC_VERSION,
+              event_detail: "KEY_ROTATION_COMPLETE",
+              pq_public_key_hash: signer.getPublicKeyHash(),
+              pq_public_key_hash_sha3: signer.getPublicKeyHashSha3(),
+              credentials_reissued: reissue.reissued,
+              archived_key_count: signer.getArchivedPublicKeys().length,
+            },
+          });
+
+          const summary = {
+            rotated: true,
+            old_key_hash_sha3: prepared.oldKeyHashSha3,
+            new_key_hash_sha3: prepared.newKeyHashSha3,
+            effective_at: prepared.effectiveAt,
+            reason: rotateReason,
+            credentials_reissued: reissue.reissued,
+            reissue_success: reissue.failed === 0,
+            archived_key_count: signer.getArchivedPublicKeys().length,
+          };
+
+          await telegram.sendReply(
+            `🔑 <b>ISSUER KEY ROTATED</b>\n\n` +
+            `<b>Reason:</b> ${escapeHtml(rotateReason)}\n` +
+            `<b>New key hash (SHA3):</b> <code>${escapeHtml(prepared.newKeyHashSha3.slice(0, 16))}...</code>\n` +
+            `<b>Credentials re-issued:</b> ${reissue.reissued}` +
+            (reissue.failed > 0 ? `\n⚠️ Re-issue failures: ${reissue.failed}` : ""),
+            { broadcast: true },
+          ).catch(() => {});
+
+          return { content: [{ type: "text" as const, text: JSON.stringify(summary, null, 2) }] };
+        } catch (error) {
+          return { content: [{ type: "text" as const, text: `Error: ${(error as Error).message}` }], isError: true };
+        }
       }
 
       // -- Why Layer tool (v0.6.0) --------------------------------------------
@@ -1348,7 +1448,7 @@ async function main(): Promise<void> {
           const peer = {
             deviceId,
             agentIdHash: "unknown",
-            ephemeralPublicKey: new Uint8Array(32),
+            ephemeralPublicKey: generateEphemeralKeypair().publicKey,
             supportedMethods: ["uwb-sts" as const],
             maxRangeMeters: proximityConfig.maxProximityMeters,
             discoveredAt: new Date().toISOString(),

@@ -16,15 +16,17 @@ Every release of Atlas Protocol MUST answer these questions before merging to ma
 ## Code Quality
 
 - [ ] `npm run build` passes with no errors.
-- [ ] `npm test` passes all tests (currently 575).
+- [ ] `npm test` passes all tests.
+- [ ] DIDComm adapter tests pass (`cd packages/atlas-didcomm-adapter && npm test`).
 - [ ] No new `any` casts without justification.
 - [ ] No `require()` in ESM modules.
 
 ## Version Bump
 
 - [ ] `package.json` version updated.
-- [ ] `src/index.ts` VERSION constant updated.
-- [ ] `src/why-engine.ts` PROTOCOL_VERSION updated (if spec-level changes).
+- [ ] `src/index.ts` VERSION constant updated (must match `package.json`).
+- [ ] `src/protocol-version.ts` PROTOCOL_VERSION updated (if wire-format changes).
+- [ ] README version map updated.
 - [ ] `CHANGELOG.md` entry added with date.
 - [ ] `SPEC.md` front matter version updated (if spec-level changes).
 

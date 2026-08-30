@@ -251,3 +251,65 @@ describe("IdentityRegistry — persistence", () => {
     assert.equal(registry.isEmpty(), false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Key rotation re-issue (SPEC §4.5)
+// ---------------------------------------------------------------------------
+
+describe("IdentityRegistry — credential re-issue on key rotation", () => {
+  it("re-issued credentials verify against the new issuer key", async () => {
+    const dir = makeTempDir();
+    const signer = await QuantumSigner.create(dir);
+    const registry = await IdentityRegistry.create(dir, signer);
+
+    const cred = registry.register({
+      name: "rotate-agent",
+      role: "admin",
+      capabilities: ["identity:register", "file:read"],
+    });
+    assert.equal(registry.verify(cred.agentId).valid, true);
+
+    const prepared = signer.beginRotation();
+    const result = registry.reissueAllActive(prepared.newSecretKey);
+    assert.equal(result.reissued, 1);
+    assert.equal(result.failed, 0);
+
+    signer.commitRotation(prepared);
+    registry.syncIssuerKeys();
+
+    const verified = registry.verify(cred.agentId);
+    assert.equal(verified.valid, true, "re-issued credential should verify with new issuer key");
+
+    const reissued = registry.get(cred.agentId)!;
+    assert.equal(reissued.agentId, cred.agentId);
+    assert.equal(reissued.credentialHash, cred.credentialHash);
+    assert.notEqual(reissued.issuerSignature, cred.issuerSignature);
+  });
+
+  it("does not re-issue revoked credentials", async () => {
+    const dir = makeTempDir();
+    const signer = await QuantumSigner.create(dir);
+    const registry = await IdentityRegistry.create(dir, signer);
+
+    const active = registry.register({
+      name: "keep",
+      role: "tool-caller",
+      capabilities: ["file:read"],
+    });
+    const revoked = registry.register({
+      name: "drop",
+      role: "observer",
+      capabilities: ["audit:read"],
+    });
+    registry.revoke(revoked.agentId, "test");
+
+    const prepared = signer.beginRotation();
+    const result = registry.reissueAllActive(prepared.newSecretKey);
+    assert.equal(result.reissued, 1);
+    signer.commitRotation(prepared);
+    registry.syncIssuerKeys();
+
+    assert.equal(registry.verify(active.agentId).valid, true);
+    assert.equal(registry.get(revoked.agentId)!.revoked, true);
+  });
+});

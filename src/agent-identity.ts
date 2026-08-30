@@ -218,6 +218,40 @@ export function issueCredential(
 }
 
 /**
+ * Re-sign an existing credential with a new issuer key (SPEC §4.5 rotation).
+ * Identity, capabilities, expiry, agent public key, and delegation chain
+ * are unchanged — only `issuerSignature` is replaced. `credentialHash` is
+ * of the canonical payload excluding the signature, so it stays the same.
+ */
+export function reissueCredential(
+  credential: AgentCredential,
+  issuerSecretKey: Uint8Array
+): AgentCredential {
+  if (!_ml_dsa65) {
+    throw new Error("Agent identity not initialized — call initAgentIdentity() first");
+  }
+
+  const { issuerSignature: _oldSig, credentialHash, ...rest } = credential;
+  const canonicalPayload = buildCanonicalPayload(rest);
+  const expectedHash = createHash("sha3-256")
+    .update(canonicalPayload)
+    .digest("hex");
+  if (credentialHash !== expectedHash) {
+    throw new Error(
+      `Credential hash mismatch for ${credential.agentId} — refusing to re-issue a tampered credential`
+    );
+  }
+
+  const payloadBytes = new Uint8Array(Buffer.from(canonicalPayload));
+  const signatureBytes = _ml_dsa65.sign(issuerSecretKey, payloadBytes);
+  return {
+    ...credential,
+    issuerSignature: Buffer.from(signatureBytes).toString("base64"),
+    credentialHash,
+  };
+}
+
+/**
  * Verify a credential's issuer signature, expiry, and revocation status.
  */
 export function verifyCredential(

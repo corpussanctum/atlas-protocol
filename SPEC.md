@@ -1,9 +1,9 @@
 # Atlas Protocol Specification
 
-**Version:** 1.0.0
+**Version:** 1.0.1
 **Status:** Published
 **Authors:** TJ Lane (Corpus Sanctum)
-**Last updated:** 2026-03-30
+**Last updated:** 2026-08-29
 
 This document defines the normative requirements for Atlas Protocol. It separates **what a conformant implementation MUST do** from **how the reference implementation happens to do it**. The reference implementation (this repository) uses Telegram, Ollama, and MCP as its transport and runtime, but those are binding choices of this implementation, not of the protocol.
 
@@ -130,7 +130,7 @@ did:atlas:<uuid>
 
 Where `<uuid>` is a RFC 4122 v4 UUID. Example: `did:atlas:550e8400-e29b-41d4-a716-446655440000`.
 
-> **Scope constraint:** `did:atlas` as defined in this specification is a **local, single-operator DID method**. It does not define federated namespace resolution, inter-operator trust exchange, or a public resolution network. Cross-operator use cases will require a future DID method version with new syntax and resolution semantics. Implementations MUST NOT advertise `did:atlas` identifiers as globally resolvable. See [corpussanctum/atlas-protocol#1](https://github.com/corpussanctum/atlas-protocol/issues/1) for federation tracking.
+> **Scope constraint:** `did:atlas` as defined in this specification is a **local, single-operator DID method**. It does not define federated namespace resolution, inter-operator trust exchange, or a public resolution network. Cross-operator use cases will require a future DID method version with new syntax and resolution semantics. Implementations MUST NOT advertise `did:atlas` identifiers as globally resolvable.
 
 ### 4.2 DID document
 
@@ -215,7 +215,7 @@ The `KEY_ROTATION` event MUST be signed by the **old** key (proving the holder o
 - Entries before the `KEY_ROTATION` event are verified against the old key; entries after are verified against the new key. The `KEY_ROTATION` entry itself is verified against the old key.
 - If a verifier encounters an entry whose `pq_signature` fails against both the current and retained old keys, it MUST report `PQ_SIGNATURE_INVALID`.
 
-> **Note:** The reference implementation does not yet implement automated key rotation or well-known URI publication. These are specified for forward compatibility.
+> **Note:** The reference implementation implements the key rotation procedure above (`atlas_key_rotate`). Well-known URI publication is still specified for forward compatibility and is not implemented.
 
 ### 4.6 Bootstrap guard
 
@@ -234,8 +234,8 @@ When the registry is empty, attestation MUST return an unverified pass (with `id
 For **Production** and **Research** conformance, the first credential registration MUST require two-channel confirmation:
 
 1. The gatekeeper generates a cryptographically random confirmation code (minimum 6 hex characters, sourced from a CSPRNG).
-2. The code is displayed on the host console (requires physical or SSH access).
-3. The code is sent as a challenge to the operator relay.
+2. The code is delivered on the **host channel**. Implementations MUST write it to STDERR (visible in terminal launches) and MUST also persist it to a single-use file `<data_dir>/bootstrap-code.txt` (mode 0600) for the duration of the confirmation window. Filesystem access on the host is the equivalent of physical or SSH console access. The file MUST be deleted on confirmation success, denial, or timeout.
+3. A challenge is sent to the operator relay. The challenge MUST NOT contain the confirmation code — sending the code over the relay would collapse both channels into one.
 4. The operator MUST reply with the exact code via the relay within the confirmation timeout.
 5. If the code matches, registration proceeds. Otherwise, registration is denied.
 
@@ -649,19 +649,20 @@ Fields under `extensions` MUST be ignored by implementations that do not recogni
 
 ### 11.2 Version negotiation
 
-Atlas uses three distinct version identifiers:
+Atlas uses four distinct version identifiers:
 
 | Identifier | Current value | Meaning | Where it appears |
 |---|---|---|---|
-| **Spec document version** | `"1.0.0"` | The version of this specification document. Changes with each published revision of the spec. | Header of this document, `package.json` |
+| **Spec document version** | `"1.0.1"` | The version of this specification document. Changes with each published revision of the spec. | Header of this document |
+| **Implementation version** | `"1.0.2"` | The reference implementation (this repository). Independent of spec and protocol versions. | `package.json`, plugin manifests, `atlas_status.version`, `SESSION_START` → `meta.version` |
 | **Credential schema version** | `"0.5.0"` | Structure of `AgentCredential` objects. Changes when fields are added/removed from the credential type. | Credential `version` field |
-| **Protocol version** | `"0.8.4"` | The wire-format protocol version governing pipeline behavior, audit format, delegation semantics, and conformance requirements. Incremented as protocol behavior changes, independent of the spec document version. | `SESSION_START` → `meta.version`, delegation authority → `version`, `ModelProvenance.protocolVersion` |
+| **Protocol version** | `"0.8.4"` | The wire-format protocol version governing pipeline behavior, audit format, delegation semantics, and conformance requirements. Incremented as protocol behavior changes, independent of the spec document version. | `SESSION_START` → `meta.protocol_version`, delegation authority → `version`, `ModelProvenance.protocolVersion` |
 
-These are independent. A gatekeeper at protocol version 0.8.4 may issue credentials with schema version 0.5.0. The credential schema version changes only when the credential structure changes — it has not changed since v0.5.0. The spec document version tracks editorial revisions and may advance without changing either wire-format version.
+These are independent. A gatekeeper at protocol version 0.8.4 may issue credentials with schema version 0.5.0. The credential schema version changes only when the credential structure changes — it has not changed since v0.5.0. The spec document version tracks editorial revisions and may advance without changing the wire-format version. The implementation version tracks the reference implementation and may advance for bug fixes without changing either.
 
 **Version authority rules:**
 
-- The **gatekeeper's protocol version** (from `SESSION_START → meta.version`) is authoritative for the current session's behavior.
+- The **gatekeeper's protocol version** (from `SESSION_START → meta.protocol_version`, falling back to `meta.version` on logs written before 1.0.2) is authoritative for the current session's behavior.
 - The **credential schema version** indicates which credential structure was used. A gatekeeper MAY accept credentials from older schema versions if the fields are a subset.
 - A gatekeeper MUST NOT accept credentials from a **newer major version** than it implements (e.g., a schema v0.x gatekeeper MUST reject a schema v1.x credential).
 - Minor version differences within the same major version MUST be tolerated — newer minor versions add fields but do not remove or redefine existing ones.
@@ -1146,7 +1147,7 @@ Atlas Protocol improves auditability and operator oversight for autonomous AI ag
 | **Relay transport compromise** | If the Telegram bot token (or equivalent) is stolen, an attacker can approve requests and suppress denials. | Rotate bot tokens, restrict chat IDs, use two-channel confirmation for bootstrap and break-glass. |
 | **Low-entropy redaction** | Bare SHA-256 over low-entropy values (SSN, phone) is trivially reversible via brute force. | Atlas requires HMAC-SHA256 with a secret key for redaction (§6.7). Implementations MUST NOT use bare SHA-256 for low-entropy fields. |
 | **Replay / rollback** | An attacker with disk access could truncate the audit log or replay old entries. | Sequence numbers + checkpoints + rotation manifests detect truncation. External anchoring provides strongest defense. |
-| **Key compromise without rotation** | If the ML-DSA-65 signing key is stolen, the attacker can forge audit entries and credentials. | Key rotation procedure (§4.5) limits exposure window. HSM storage (future) prevents key extraction. |
+| **Key compromise without rotation** | If the ML-DSA-65 signing key is stolen, the attacker can forge audit entries and credentials. | Key rotation procedure (§4.5, `atlas_key_rotate`) limits exposure window. HSM storage (future) prevents key extraction. |
 | **Multi-party trust without external anchoring** | A single gatekeeper can forge its own audit trail if compromised. External verifiers who rely only on the gatekeeper's key have no independent trust anchor. | External checkpoint anchoring and well-known URI publication (both future) address this. |
 
 ## Appendix I: Terminology
@@ -1363,7 +1364,7 @@ UWB Time-of-Flight (ToF) ranging with STS (prevents relay attacks). The ranging 
 
 1. **Discovery** — BLE advertisement containing `atlas-proximity` service UUID and short-lived ephemeral public key.
 2. **UWB ranging handshake** — mutual distance bounding (both agents verify the other is within range).
-3. **Noise Protocol handshake** — IK pattern (or KK for pre-shared identity) with proximity proof as AD.
+3. **Noise Protocol handshake** — IK pattern (or KK for pre-shared identity) with proximity proof as AD. The reference implementation uses X25519 ECDH + HKDF-SHA256 + AES-256-GCM with this key-use pattern; it is not required to be byte-compatible with `Noise_IK_25519_ChaChaPoly_SHA256`.
 4. **Atlas credential exchange** — present `did:atlas` credential + chain + proximity proof.
 5. **Local verification** — run the full Atlas permission pipeline (identity attestation + policy engine + anomaly detection) locally on both sides.
 6. **Scoped delegation** (optional) — issue child credential using existing cascade rules.
