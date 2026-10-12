@@ -6,6 +6,7 @@
  *   atlas-operator break-glass --reason TEXT [--ttl MINUTES] [--max-requests N] [--key-file PATH]
  *   atlas-operator status
  *   atlas-operator revoke
+ *   atlas-operator registry-reset --reason TEXT [--key-file PATH]
  *
  * Common: --data-dir PATH (default: same resolution as the server)
  *
@@ -14,6 +15,7 @@
  * agent could supply.
  */
 
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { loadConfig } from "./config.js";
@@ -24,6 +26,8 @@ import {
   operatorSecretPath,
   MIN_PASSPHRASE_LENGTH,
 } from "./operator-key.js";
+import { QuantumSigner } from "./quantum-signer.js";
+import { resetIdentityRegistry, summarizeRegistry } from "./registry-reset.js";
 import { BreakGlassManager, issueBreakGlassToken, DEFAULT_TTL_MINUTES, MAX_TTL_MINUTES } from "./break-glass.js";
 
 const USAGE = `Usage:
@@ -31,6 +35,7 @@ const USAGE = `Usage:
   atlas-operator break-glass --reason TEXT [--ttl MINUTES] [--max-requests N] [--key-file PATH]
   atlas-operator status
   atlas-operator revoke
+  atlas-operator registry-reset --reason TEXT [--key-file PATH]
 
 Options:
   --data-dir PATH   Atlas data directory (default: ATLAS_DATA_DIR, CLAUDE_PLUGIN_DATA, or ~/.atlas-protocol)
@@ -96,7 +101,8 @@ async function main(): Promise<number> {
     console.error(USAGE);
     return command ? 0 : 1;
   }
-  const dataDir = str(flags, "data-dir") ?? loadConfig().data_dir;
+  const dataDirFlag = str(flags, "data-dir");
+  const dataDir = dataDirFlag ?? loadConfig().data_dir;
   const keyFile = str(flags, "key-file") ?? operatorSecretPath(dataDir);
 
   switch (command) {
@@ -141,6 +147,39 @@ async function main(): Promise<number> {
     case "revoke": {
       const manager = await BreakGlassManager.open(dataDir, readOperatorPublicKey(dataDir));
       console.log(manager.revoke() ? "Break-glass token revoked." : "No break-glass token found.");
+      return 0;
+    }
+
+    case "registry-reset": {
+      const reason = str(flags, "reason");
+      if (!reason) throw new Error("--reason is required");
+      const pub = readOperatorPublicKey(dataDir);
+      if (!pub) throw new Error("No operator key configured; run `atlas-operator keygen` first");
+      const summary = summarizeRegistry(dataDir);
+      if (!summary) {
+        console.log("No identity registry found; the bootstrap window is already open.");
+        return 0;
+      }
+      console.error(
+        `Registry ${summary.path}: ${summary.total} credential(s) — ` +
+          `${summary.active} active, ${summary.expired} expired, ${summary.revoked} revoked.`,
+      );
+      const operator = unlockOperatorKey(keyFile, await promptHidden(`Operator passphrase for ${pub.key_id}: `));
+      if (operator.keyId !== pub.key_id) {
+        throw new Error(`Key file ${operator.keyId} does not match the configured operator key ${pub.key_id}`);
+      }
+      const base = loadConfig();
+      const config = dataDirFlag
+        ? { ...base, data_dir: dataDir, audit_log_path: join(dataDir, "audit.jsonl") }
+        : base;
+      if (!config.audit_hmac_secret) {
+        console.error("Note: ATLAS_HMAC_SECRET is not set here; the entry is ML-DSA-65 and operator signed, without HMAC.");
+      }
+      const result = await resetIdentityRegistry(config, operator, reason, await QuantumSigner.create(dataDir));
+      if (!result) throw new Error("Registry disappeared before reset");
+      console.log(`REGISTRY_RESET logged (seq ${result.entry.seq}); registry archived to ${result.archivedPath}.`);
+      console.log("Restart every running Atlas server (reconnect the MCP server in each Claude Code session) before registering:");
+      console.log("they hold the old registry in memory. The next registration is a bootstrap and needs two-channel confirmation.");
       return 0;
     }
 
