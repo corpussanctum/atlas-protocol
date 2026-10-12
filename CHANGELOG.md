@@ -4,6 +4,21 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **Permission pipeline is now fail-closed on internal errors.** If the
+  operator channel threw (e.g. Telegram unreachable), or the policy engine or
+  audit logger raised, the request got no verdict at all. Now an operator
+  error is recorded as `TIMEOUT_DENY` (`reason: "Operator channel error: …"`),
+  and any other pipeline exception is a `POLICY_DENY` with `meta.pipeline_error`.
+  In every case an explicit deny is returned.
+
+### Changed
+- The permission pipeline moved from `src/index.ts` into
+  `src/authority/permission-pipeline.ts` (`createPermissionPipeline`) with
+  injected dependencies and a transport-neutral `OperatorChannel`: the first
+  step of the authority-core extraction (#5). Behavior unchanged, as shown by
+  new MCP-level characterization tests written before the move.
+
 ## [1.0.4] - 2026-10-12
 
 Hardening from the first CodeQL pass: `config.json` is validated field by

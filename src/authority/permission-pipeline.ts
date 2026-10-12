@@ -21,7 +21,7 @@ import type { BaselineStore } from "../baseline-store.js";
 import type { BreakGlassManager } from "../break-glass.js";
 import type { QuietModeConfig } from "../quiet-mode.js";
 import type { VerdictOutcome, SendReplyOptions } from "../telegram.js";
-import { attestAgent, enrichAuditEntry, toolToCapability } from "../attestation.js";
+import { attestAgent, toolToCapability } from "../attestation.js";
 import { checkQuietEligibility } from "../quiet-mode.js";
 import { escapeHtml } from "../html.js";
 
@@ -58,7 +58,28 @@ export function createPermissionPipeline(deps: PermissionPipelineDeps): (req: Pe
   const { registry, policyEngine, audit, baselineStore, quietConfig, breakGlass, config } = deps;
   const telegram = deps.operator;
 
-  return async function decide(req: PermissionRequest): Promise<Verdict> {
+  // Fail-closed guard: any unexpected error yields an explicit deny, never a
+  // missing verdict. Logging the failure is best-effort (audit may be the fault).
+  return async function decideFailClosed(req: PermissionRequest): Promise<Verdict> {
+    try {
+      return await decide(req);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[atlas] Permission pipeline error for ${req.request_id}; denying:`, err);
+      try {
+        audit.log("POLICY_DENY", {
+          permission: req,
+          verdict: "deny",
+          meta: { pipeline_error: message },
+        });
+      } catch {
+        // Audit unavailable; the deny still stands.
+      }
+      return "deny";
+    }
+  };
+
+  async function decide(req: PermissionRequest): Promise<Verdict> {
     const sessionAgentId = deps.getSessionAgentId();
 
     // --- Step 1: Agent attestation (before policy evaluation) ---------------
@@ -78,18 +99,6 @@ export function createPermissionPipeline(deps: PermissionPipelineDeps): (req: Pe
 
     // If attestation failed and registry is not empty → deny immediately
     if (attestation.denyReason) {
-      const entry = enrichAuditEntry(
-        {
-          id: "",
-          timestamp: "",
-          event: "POLICY_DENY",
-          prev_hash: "",
-          permission: req,
-          verdict: "deny",
-        },
-        attestation
-      );
-
       audit.log("POLICY_DENY", {
         permission: req,
         verdict: "deny",
@@ -235,14 +244,22 @@ export function createPermissionPipeline(deps: PermissionPipelineDeps): (req: Pe
       }
     }
 
-    const outcome = await telegram.requestVerdict(
-      req.request_id,
-      req.tool_name,
-      req.description,
-      req.input_preview,
-      promptFlags,
-      config.permission_timeout_seconds
-    );
+    let outcome: VerdictOutcome;
+    let operatorError: string | undefined;
+    try {
+      outcome = await telegram.requestVerdict(
+        req.request_id,
+        req.tool_name,
+        req.description,
+        req.input_preview,
+        promptFlags,
+        config.permission_timeout_seconds
+      );
+    } catch (err) {
+      // No verdict obtainable from the operator is treated as no verdict: deny.
+      operatorError = err instanceof Error ? err.message : String(err);
+      outcome = { decision: "timeout" };
+    }
 
     if (outcome.decision === "allow") {
       audit.log("HUMAN_APPROVE", {
@@ -270,12 +287,13 @@ export function createPermissionPipeline(deps: PermissionPipelineDeps): (req: Pe
       verdict: "deny",
       meta: {
         ...identityMeta,
-        reason:
-          config.telegram_allowed_chat_ids.length === 0
+        reason: operatorError
+          ? `Operator channel error: ${operatorError}`
+          : config.telegram_allowed_chat_ids.length === 0
             ? "No authorized Telegram chat configured"
             : "No human verdict received before timeout",
       },
     });
     return "deny";
-  };
+  }
 }

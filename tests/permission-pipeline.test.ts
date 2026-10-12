@@ -177,6 +177,20 @@ describe("createPermissionPipeline", () => {
     });
   });
 
+  describe("fail-closed guard", () => {
+    it("a policy engine exception is a deny, recorded in the audit log", async () => {
+      const decide = pipeline(policy("allow"), { policyEngine: { evaluate: () => { throw new Error("bad rule"); } } });
+      assert.equal(await decide(req()), "deny");
+      assert.deepEqual(names(), ["PERMISSION_REQUEST", "POLICY_DENY"]);
+      assert.match(events[1].data.meta.pipeline_error, /bad rule/);
+    });
+
+    it("an audit failure is still a deny (never a missing verdict)", async () => {
+      const decide = pipeline(policy("allow"), { audit: { log: () => { throw new Error("disk full"); } } });
+      assert.equal(await decide(req()), "deny");
+    });
+  });
+
   describe("operator verdict", () => {
     it("approve", async () => {
       operator = new FakeOperator({ decision: "allow", responder_chat_id: 42 });
@@ -196,6 +210,13 @@ describe("createPermissionPipeline", () => {
       assert.equal(await pipeline(policy("ask"))(req()), "deny");
       assert.deepEqual(names(), ["PERMISSION_REQUEST", "TIMEOUT_DENY"]);
       assert.equal(events[1].data.meta.reason, "No human verdict received before timeout");
+    });
+
+    it("an operator channel failure is a fail-closed deny", async () => {
+      operator.requestVerdict = async () => { throw new Error("telegram unreachable"); };
+      assert.equal(await pipeline(policy("ask"))(req()), "deny");
+      assert.deepEqual(names(), ["PERMISSION_REQUEST", "TIMEOUT_DENY"]);
+      assert.match(events[1].data.meta.reason, /Operator channel error: telegram unreachable/);
     });
 
     it("passes sensitivity matches to the operator as flags", async () => {
