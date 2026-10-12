@@ -14,6 +14,7 @@ import type { IdentityContext } from "../identity-provider.js";
 import type { BaselineStore } from "../baseline-store.js";
 import type { BreakGlassManager } from "../break-glass.js";
 import type { AttachManager } from "../identity-attach.js";
+import type { IsolationReport } from "../isolation.js";
 import type { QuietModeConfig } from "../quiet-mode.js";
 import type { AuditRotationManager } from "../audit-rotation.js";
 import type { WhyEngineConfig } from "../why-engine.js";
@@ -37,6 +38,8 @@ export interface ToolContext {
   baselineStore: BaselineStore;
   breakGlass: BreakGlassManager;
   identityAttach: AttachManager;
+  /** Separate-user isolation self-check, taken at startup (#23) */
+  isolation: IsolationReport;
   quietConfig: QuietModeConfig;
   proximityConfig: ProximityMeshConfig;
   getHardware(): Promise<HardwareAdapterSet>;

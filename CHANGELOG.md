@@ -5,6 +5,19 @@ All notable changes to Atlas Protocol are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Separate-user deployment** (#23). `deploy/separate-user/install.sh` runs
+  the gatekeeper as a dedicated `atlas` user:
+  - code in root-owned `/opt/atlas-protocol`
+  - state in `/var/lib/atlas-protocol` (0700)
+  - secrets in `/etc/atlas-protocol/atlas.env` (`root:atlas` 0640)
+  - a launcher the agent's user may run through one argument-less sudo rule
+
+  The installer refuses a Node binary the agent could write. `verify.sh`
+  checks from the agent's side that the issuer key, audit log and secrets
+  are unreadable and unwritable, and flags root-equivalent groups. A new CI
+  job runs the full two-user install. The new `isolation` self-check
+  (`src/isolation.ts`) shows in `atlas_status`, and
+  `ATLAS_REQUIRE_ISOLATION=true` refuses to start without isolation.
 - **Restart-durable agent keys** (#4). Agent signing keys lived only in
   memory, so after a gatekeeper restart no agent registered earlier could
   delegate. New `SignerProvider` interface (sign / publicKey / id /

@@ -55,7 +55,9 @@ function normalizer(dataDir: string): (s: string) => string {
       .replace(/\b\d{8}-\d{6}\b/g, "<STAMP>")
       .replace(/"(size_mb|total_size_mb)": "[\d.]+"/g, '"$1": "<N>"')
       .replace(/"(issuerSignature|signature|chainSignature)": "[^"]+"/g, '"$1": "<SIG>"')
-      .replace(/"timeRemainingHuman": "[^"]+"/g, '"timeRemainingHuman": "<DURATION>"');
+      .replace(/"timeRemainingHuman": "[^"]+"/g, '"timeRemainingHuman": "<DURATION>"')
+      // Depends on the host's users and file modes (#23)
+      .replace(/"isolation": \{[^}]*\}/g, '"isolation": "<ISOLATION>"');
 }
 
 describe("MCP tool surface (snapshot)", () => {

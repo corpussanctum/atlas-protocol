@@ -128,6 +128,8 @@ Atlas reads configuration from environment variables, a config file (`config.jso
 | `ATLAS_DATA_DIR` | `${CLAUDE_PLUGIN_DATA}` or `~/.atlas-protocol` | Persistent state directory |
 | `ATLAS_BRIEFCASE_PATH` | — | Path to a DIB Briefcase for consent-tier enforcement |
 | `ATLAS_PRIVACY_MODE` | `false` | Redact tool input from the audit log and withhold it (and the description) from Telegram approval prompts |
+| `ATLAS_REQUIRE_ISOLATION` | `false` | Refuse to start unless the gatekeeper runs as a separate user from the agent with private state (see `deploy/separate-user/`) |
+| `ATLAS_AGENT_UID` | — | UID of the agent user, for launchers other than sudo (sudo sets `SUDO_UID`) |
 | `ATLAS_KEYSTORE_PASSPHRASE` | — | Encrypts agent signing keys at rest under `<data_dir>/agent-keys/` so delegation survives a restart. Unset: keys stay in memory only |
 | `ATLAS_TELEGRAM_SEND_INPUT` | `false` | In privacy mode, still send the input preview to Telegram. Tier 3+ sensitive data is withheld regardless |
 | `ATLAS_VELOCITY_LIMIT` | `30` | Requests per minute before anomaly flag |
@@ -632,7 +634,7 @@ cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 
 - This is a security tool, not a compliance certification. It does not replace local review of high-risk actions, legal counsel, or organizational security policy.
 - The Telegram relay depends on Telegram's availability. The **break-glass mechanism** provides an operator-signed emergency bypass when Telegram is unreachable (auto-deny remains the default without it).
-- **A governed agent that runs as the same OS user as Atlas can read and modify Atlas's data directory**: the audit log, the credential registry, the issuer signing key, and the operator public key file. Pinning and signatures limit what it can achieve mid-session, but they don't replace OS-level separation. For strong guarantees, run Atlas's state under a separate OS user the agent can't write to.
+- **A governed agent that runs as the same OS user as Atlas can read and modify Atlas's data directory**: the audit log, the credential registry, the issuer signing key, and the operator public key file. Pinning and signatures limit what it can achieve mid-session, but they don't replace OS-level separation. The [separate-user deployment](deploy/separate-user/README.md) runs the gatekeeper as its own system user, started through a single sudo rule, and `atlas_status` reports whether that isolation holds (`isolation.isolated`). It only helps if the agent's user isn't root-equivalent (passwordless sudo, or the `docker`/`lxd`/`libvirt` groups).
 - The policy engine uses glob patterns and string matching, not semantic analysis. Known false positives exist (e.g., `TRUNCATE` matching the `ncat` network tool pattern). Defense in depth applies.
 - The Why Layer requires a running Ollama instance. Without it, the layer returns nominal stubs — it never blocks the gatekeeper.
 - Behavioral baselines need ~10 sessions before drift detection produces meaningful signals (maturity model handles this).

@@ -47,6 +47,48 @@ jobs:
       - name: Package contents include the server entry point
         run: npm pack --dry-run 2>&1 | tee /dev/stderr | grep -q 'dist/index.js'
 
+  isolation:
+    # #23: install the gatekeeper under its own user and check, as an
+    # unprivileged agent user, that its state is out of reach.
+    name: separate-user isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Refuses to start unisolated when isolation is required
+        run: |
+          set +e
+          ATLAS_DATA_DIR="$(mktemp -d)" ATLAS_REQUIRE_ISOLATION=true timeout 20 node dist/index.js </dev/null 2>err.txt
+          code=$?
+          cat err.txt
+          test "$code" = 1 && grep -q "Refusing to start" err.txt
+      - name: Root-owned Node binary (the toolcache one is runner-writable)
+        run: sudo install -o root -g root -m 0755 "$(command -v node)" /usr/local/lib/atlas-node
+      - name: Create the agent user
+        run: sudo useradd --create-home --shell /bin/bash agent
+      - name: Install
+        run: sudo NODE=/usr/local/lib/atlas-node sh deploy/separate-user/install.sh agent
+      - name: Configure
+        run: printf 'ATLAS_REQUIRE_ISOLATION=true\n' | sudo tee /etc/atlas-protocol/atlas.env >/dev/null
+      - name: Let the agent user read the checkout (for the smoke client)
+        run: |
+          sudo chmod o+x "$HOME" "$HOME/work" "$(dirname "$GITHUB_WORKSPACE")"
+          chmod -R o+rX "$GITHUB_WORKSPACE"
+      - name: Verify as the agent user
+        run: sudo -u agent -H env PATH="$(dirname "$(command -v node)"):/usr/bin:/bin" sh deploy/separate-user/verify.sh
+      - name: State is owned by the gatekeeper user and private
+        run: |
+          sudo stat -c '%U %a %n' /var/lib/atlas-protocol /var/lib/atlas-protocol/audit.jsonl /var/lib/atlas-protocol/quantum-keypair.json /etc/atlas-protocol/atlas.env | tee perms.txt
+          grep -qx 'atlas 700 /var/lib/atlas-protocol' perms.txt
+          grep -qx 'atlas 600 /var/lib/atlas-protocol/audit.jsonl' perms.txt
+          grep -qx 'atlas 600 /var/lib/atlas-protocol/quantum-keypair.json' perms.txt
+          grep -qx 'root 640 /etc/atlas-protocol/atlas.env' perms.txt
+
   adapter:
     name: didcomm-adapter (node ${{ matrix.node }})
     runs-on: ubuntu-latest

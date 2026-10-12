@@ -123,6 +123,12 @@ export function handlers(ctx: ToolContext): Record<string, ToolHandler> {
           quiet_tools: Array.from(quietConfig.quiet_tools),
         },
         break_glass: breakGlass.getStatus(),
+        isolation: {
+          isolated: ctx.isolation.isolated,
+          process_uid: ctx.isolation.process_uid,
+          launched_by_uid: ctx.isolation.launched_by_uid,
+          problems: ctx.isolation.problems,
+        },
         identity: {
           loaded: identityContext.loaded,
           principal: identityContext.principal_label || null,
