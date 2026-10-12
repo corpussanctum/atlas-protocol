@@ -6,7 +6,7 @@ import { PROTOCOL_VERSION } from "../../protocol-version.js";
 import { VERSION, SPEC_VERSION } from "../../version.js";
 import { credentialTimeRemaining } from "../helpers.js";
 import { escapeHtml } from "../../html.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolHandler } from "../context.js";
 
 export const definitions: Tool[] = [
