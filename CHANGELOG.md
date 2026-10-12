@@ -4,6 +4,19 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Operator-signed identity attach** (#39). A server restart left the session's
+  credential valid but unbound, so every permission request was denied
+  `UNREGISTERED_AGENT` and registration was locked. `atlas-operator attach
+  --agent DID [--ttl MINUTES]` (operator passphrase on a TTY) writes a
+  single-use token. It is bound to the credential's hash, valid 10 min by
+  default (60 max), and carries an ML-DSA-65 operator signature. The new tool
+  `atlas_identity_attach` verifies it and re-binds the session, logging the
+  new event type `IDENTITY_ATTACHED`; rejected tokens log
+  `IDENTITY_ATTACH_REJECTED`. The agent's secret key is not restored, so
+  delegating from an attached credential still needs #4. SPEC §4.6 documents
+  the requirements.
+
 ### Changed
 - **MCP TypeScript SDK v2** (#6): the server now uses `@modelcontextprotocol/server`
   2.3 (2026-07-28 spec line) with zod 4, replacing `@modelcontextprotocol/sdk` v1.

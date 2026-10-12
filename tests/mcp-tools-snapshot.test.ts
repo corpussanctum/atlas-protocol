@@ -105,6 +105,7 @@ describe("MCP tool surface (snapshot)", () => {
       name: "orchestrator", role: "orchestrator", capabilities: ["file:read", "file:write", "process:spawn"],
     }));
     await call("atlas_identity_verify", { agent_id: parent });
+    await call("atlas_identity_attach"); // already bound
     await call("atlas_identity_list", { filter: "active" });
     const child = agentIdFrom(await call("atlas_identity_delegate", {
       parent_agent_id: parent, child_name: "reader", child_role: "tool-caller", capabilities: ["file:read"],
@@ -128,6 +129,7 @@ describe("MCP tool surface (snapshot)", () => {
     await call("atlas_identity_revoke", { agent_id: child, reason: "snapshot" });
     await call("atlas_identity_cascade_revoke", { parent_agent_id: parent, reason: "snapshot" });
     await call("atlas_identity_list", { filter: "revoked" });
+    await call("atlas_identity_attach"); // unbound, no token
     await call("atlas_key_rotate", { reason: "snapshot" });
     await call("atlas_audit_verify");
     await call("atlas_audit_archives", {});

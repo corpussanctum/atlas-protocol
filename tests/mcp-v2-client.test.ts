@@ -45,7 +45,7 @@ describe("v2 MCP client interop", () => {
 
   it("lists all tools and calls one", async () => {
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 26);
+    assert.equal(tools.length, 27);
     const res: any = await client.callTool({ name: "atlas_break_glass_status", arguments: {} });
     assert.equal(JSON.parse(res.content[0].text).active, false);
   });

@@ -25,6 +25,11 @@
     "text": "{\n  \"valid\": true,\n  \"agentId\": \"<DID1>\",\n  \"expired\": false,\n  \"revoked\": false\n}"
   },
   {
+    "tool": "atlas_identity_attach",
+    "isError": true,
+    "text": "Error: session is already bound to <DID1>"
+  },
+  {
     "tool": "atlas_identity_list",
     "isError": false,
     "text": "[\n  {\n    \"agentId\": \"<DID1>\",\n    \"name\": \"orchestrator\",\n    \"role\": \"orchestrator\",\n    \"issuedAt\": \"<TS>\",\n    \"expiresAt\": \"<TS>\",\n    \"publicKey\": \"<HEX>\",\n    \"capabilities\": [\n      \"file:read\",\n      \"file:write\",\n      \"process:spawn\"\n    ],\n    \"version\": \"0.5.0\",\n    \"revoked\": false,\n    \"issuerSignature\": \"<SIG>\",\n    \"credentialHash\": \"<HEX>\",\n    \"timeRemainingMs\": <N>,\n    \"timeRemainingHuman\": \"<DURATION>\"\n  }\n]"
@@ -118,6 +123,11 @@
     "tool": "atlas_identity_list",
     "isError": false,
     "text": "[\n  {\n    \"agentId\": \"<DID1>\",\n    \"name\": \"orchestrator\",\n    \"role\": \"orchestrator\",\n    \"issuedAt\": \"<TS>\",\n    \"expiresAt\": \"<TS>\",\n    \"publicKey\": \"<HEX>\",\n    \"capabilities\": [\n      \"file:read\",\n      \"file:write\",\n      \"process:spawn\"\n    ],\n    \"version\": \"0.5.0\",\n    \"revoked\": true,\n    \"issuerSignature\": \"<SIG>\",\n    \"credentialHash\": \"<HEX>\",\n    \"revokedAt\": \"<TS>\",\n    \"revokedReason\": \"snapshot\",\n    \"timeRemainingMs\": <N>,\n    \"timeRemainingHuman\": \"<DURATION>\"\n  },\n  {\n    \"agentId\": \"<DID2>\",\n    \"name\": \"reader\",\n    \"role\": \"tool-caller\",\n    \"issuedAt\": \"<TS>\",\n    \"expiresAt\": \"<TS>\",\n    \"publicKey\": \"<HEX>\",\n    \"capabilities\": [\n      \"file:read\"\n    ],\n    \"version\": \"0.5.0\",\n    \"revoked\": true,\n    \"delegated\": true,\n    \"delegation\": {\n      \"rootId\": \"<DID1>\",\n      \"parentId\": \"<DID1>\",\n      \"depth\": 1,\n      \"chainSignature\": \"<SIG>\"\n    },\n    \"issuerSignature\": \"<SIG>\",\n    \"credentialHash\": \"<HEX>\",\n    \"revokedAt\": \"<TS>\",\n    \"revokedReason\": \"snapshot\",\n    \"timeRemainingMs\": <N>,\n    \"timeRemainingHuman\": \"<DURATION>\"\n  }\n]"
+  },
+  {
+    "tool": "atlas_identity_attach",
+    "isError": true,
+    "text": "Error: no attach token. The operator issues one with `atlas-operator attach --agent <did>`."
   },
   {
     "tool": "atlas_key_rotate",

@@ -3,7 +3,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { sanitizeCredential } from "../../attestation.js";
+import { attestAgent, sanitizeCredential } from "../../attestation.js";
 import type { AgentRole, AgentCapability, DelegationRequest } from "../../agent-identity.js";
 import { isDelegatedCredential } from "../../agent-identity.js";
 import { PROTOCOL_VERSION } from "../../protocol-version.js";
@@ -44,6 +44,14 @@ export const definitions: Tool[] = [
       },
       required: ["name", "role", "capabilities"],
     },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "atlas_identity_attach",
+    description:
+      "Re-bind this session to an existing credential after a server restart, using a one-time " +
+      "attach token the operator issued with `atlas-operator attach --agent <did>`. Takes no arguments.",
+    inputSchema: { type: "object" as const, properties: {} },
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
@@ -302,6 +310,57 @@ export function handlers(ctx: ToolContext): Record<string, ToolHandler> {
       } catch (error) {
         return { content: [{ type: "text" as const, text: `Error: ${(error as Error).message}` }], isError: true };
       }
+    },
+    async atlas_identity_attach() {
+      const current = ctx.sessionAgentId ? attestAgent(registry, ctx.sessionAgentId) : undefined;
+      if (current && !current.denyReason) {
+        return { content: [{ type: "text" as const, text: `Error: session is already bound to ${ctx.sessionAgentId}` }], isError: true };
+      }
+
+      const result = ctx.identityAttach.consume(registry);
+      if ("rejected" in result) {
+        if (result.rejected === "NO_TOKEN") {
+          return {
+            content: [{ type: "text" as const, text: "Error: no attach token. The operator issues one with `atlas-operator attach --agent <did>`." }],
+            isError: true,
+          };
+        }
+        audit.log("POLICY_DENY", {
+          meta: { event_detail: "IDENTITY_ATTACH_REJECTED", reason: result.rejected, agent_id: result.agent_id ?? null },
+        });
+        return { content: [{ type: "text" as const, text: `Error: attach token rejected (${result.rejected}). It has been consumed; issue a new one.` }], isError: true };
+      }
+
+      const { token } = result;
+      const previousAgentId = ctx.sessionAgentId ?? null;
+      ctx.sessionAgentId = token.agent_id;
+      const credential = registry.get(token.agent_id)!;
+      audit.log("IDENTITY_ATTACHED", {
+        meta: {
+          agent_id: token.agent_id,
+          credential_hash: token.credential_hash,
+          operator_key_id: token.operator_key_id,
+          token_nonce: token.nonce,
+          token_created_at: token.created_at,
+          previous_agent_id: previousAgentId,
+        },
+      });
+      await telegram.sendReply(
+        `🔗 Session attached to <code>${escapeHtml(credential.name)}</code> (operator-signed token).`,
+        { broadcast: true },
+      ).catch(() => {});
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            attached: true,
+            ...sanitizeCredential(credential),
+            ...credentialTimeRemaining(credential.expiresAt),
+            note: "Delegation from this credential needs its secret key, which is not restored after a restart (#4).",
+          }, null, 2),
+        }],
+      };
     },
     async atlas_identity_verify(args) {
       const verifyId = args?.agent_id as string;

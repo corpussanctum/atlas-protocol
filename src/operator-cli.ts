@@ -7,6 +7,7 @@
  *   atlas-operator status
  *   atlas-operator revoke
  *   atlas-operator registry-reset --reason TEXT [--key-file PATH]
+ *   atlas-operator attach --agent DID [--ttl MINUTES] [--key-file PATH]
  *
  * Common: --data-dir PATH (default: same resolution as the server)
  *
@@ -15,6 +16,7 @@
  * agent could supply.
  */
 
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
@@ -27,7 +29,9 @@ import {
   MIN_PASSPHRASE_LENGTH,
 } from "./operator-key.js";
 import { QuantumSigner } from "./quantum-signer.js";
-import { resetIdentityRegistry, summarizeRegistry } from "./registry-reset.js";
+import { registryPath, resetIdentityRegistry, summarizeRegistry } from "./registry-reset.js";
+import { issueAttachToken, DEFAULT_ATTACH_TTL_MINUTES, MAX_ATTACH_TTL_MINUTES } from "./identity-attach.js";
+import type { AgentCredential } from "./agent-identity.js";
 import { BreakGlassManager, issueBreakGlassToken, DEFAULT_TTL_MINUTES, MAX_TTL_MINUTES } from "./break-glass.js";
 
 const USAGE = `Usage:
@@ -36,6 +40,7 @@ const USAGE = `Usage:
   atlas-operator status
   atlas-operator revoke
   atlas-operator registry-reset --reason TEXT [--key-file PATH]
+  atlas-operator attach --agent DID [--ttl MINUTES] [--key-file PATH]
 
 Options:
   --data-dir PATH   Atlas data directory (default: ATLAS_DATA_DIR, CLAUDE_PLUGIN_DATA, or ~/.atlas-protocol)
@@ -180,6 +185,38 @@ async function main(): Promise<number> {
       console.log(`REGISTRY_RESET logged (seq ${result.entry.seq}); registry archived to ${result.archivedPath}.`);
       console.log("Restart every running Atlas server (reconnect the MCP server in each Claude Code session) before registering:");
       console.log("they hold the old registry in memory. The next registration is a bootstrap and needs two-channel confirmation.");
+      return 0;
+    }
+
+    case "attach": {
+      const agentId = str(flags, "agent");
+      if (!agentId) throw new Error("--agent is required (a did:atlas:<uuid> from the identity registry)");
+      const ttl = num(flags, "ttl", DEFAULT_ATTACH_TTL_MINUTES);
+      if (ttl < 1 || ttl > MAX_ATTACH_TTL_MINUTES) throw new Error(`--ttl must be 1–${MAX_ATTACH_TTL_MINUTES} minutes`);
+      const pub = readOperatorPublicKey(dataDir);
+      if (!pub) throw new Error("No operator key configured; run `atlas-operator keygen` first");
+
+      let creds: AgentCredential[];
+      try {
+        const raw = JSON.parse(readFileSync(registryPath(dataDir), "utf-8"));
+        creds = Array.isArray(raw) ? raw : (raw.credentials ?? []);
+      } catch {
+        throw new Error(`No readable identity registry in ${dataDir}`);
+      }
+      const cred = creds.find((c) => c.agentId === agentId);
+      if (!cred) throw new Error(`${agentId} is not in the identity registry`);
+      if (cred.revoked) throw new Error(`${agentId} is revoked`);
+      if (Date.parse(cred.expiresAt) <= Date.now()) throw new Error(`${agentId} expired at ${cred.expiresAt}`);
+      console.error(`Attach target: ${cred.name} (${cred.role}), capabilities: ${cred.capabilities.join(", ")}`);
+      console.error(`  credential expires ${cred.expiresAt}`);
+
+      const operator = unlockOperatorKey(keyFile, await promptHidden(`Operator passphrase for ${pub.key_id}: `));
+      if (operator.keyId !== pub.key_id) {
+        throw new Error(`Key file ${operator.keyId} does not match the configured operator key ${pub.key_id}`);
+      }
+      const token = await issueAttachToken(dataDir, operator, cred, ttl);
+      console.log(`Attach token written; valid until ${token.expires_at}, single use.`);
+      console.log("In the restarted Claude Code session, have the agent call atlas_identity_attach.");
       return 0;
     }
 

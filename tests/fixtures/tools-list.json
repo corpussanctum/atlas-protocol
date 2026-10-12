@@ -115,6 +115,18 @@
     }
   },
   {
+    "name": "atlas_identity_attach",
+    "description": "Re-bind this session to an existing credential after a server restart, using a one-time attach token the operator issued with `atlas-operator attach --agent <did>`. Takes no arguments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
     "name": "atlas_identity_verify",
     "description": "Verify an agent credential by agentId.",
     "inputSchema": {
