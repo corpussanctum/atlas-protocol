@@ -11,6 +11,7 @@ import {
   synthesize,
   assessWindow,
   stubAssessment,
+  describeWhyEndpoint,
 } from "../src/why-engine.js";
 import type { ExpertAssessment, AuditEventWindow } from "../src/why-engine.js";
 import type { AuditEntry } from "../src/audit-log.js";
@@ -283,5 +284,37 @@ describe("stubAssessment", () => {
     assert.ok(stub.generatedAt);
     assert.ok(stub.researchArtifact);
     assert.equal(stub.researchArtifact.eventCount, 2);
+  });
+});
+
+describe("describeWhyEndpoint", () => {
+  it("treats loopback endpoints as on-host", () => {
+    for (const u of ["http://localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434"]) {
+      const d = describeWhyEndpoint(u);
+      assert.equal(d.loopback, true, u);
+      assert.equal(d.warning, null, u);
+    }
+  });
+
+  it("warns on remote plain-HTTP endpoints", () => {
+    const d = describeWhyEndpoint("http://192.168.1.50:11434");
+    assert.equal(d.loopback, false);
+    assert.equal(d.encrypted, false);
+    assert.match(d.warning ?? "", /unencrypted to 192\.168\.1\.50:11434/);
+  });
+
+  it("accepts remote HTTPS endpoints without warning", () => {
+    const d = describeWhyEndpoint("https://ollama.example.com");
+    assert.equal(d.encrypted, true);
+    assert.equal(d.warning, null);
+  });
+
+  it("does not treat lookalike hosts as loopback", () => {
+    assert.equal(describeWhyEndpoint("http://localhost.evil.example").loopback, false);
+    assert.equal(describeWhyEndpoint("http://127.0.0.1.nip.io").loopback, false);
+  });
+
+  it("reports invalid URLs", () => {
+    assert.match(describeWhyEndpoint("not a url").warning ?? "", /not a valid URL/);
   });
 });

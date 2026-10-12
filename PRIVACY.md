@@ -46,8 +46,8 @@ Atlas does **not** send data to Anthropic, Corpus Sanctum, or any third-party an
 Atlas is designed for use in clinical contexts (see [SPEC.md §12.1](SPEC.md) for DIB Briefcase integration). When processing clinical sessions:
 
 - Tool inputs may contain PHI. Enable `ATLAS_PRIVACY_MODE=true` to redact these from audit logs.
-- Telegram relay messages include tool names and verdicts but **not** full tool inputs by default.
-- The Why Layer sends recent audit entries (tool names, verdicts, timestamps) to Ollama — configure a local Ollama instance to keep PHI on-premises.
+- Telegram approval prompts include the tool name, description, and the **first 500 characters of the tool input**, so the operator can make an informed decision. This preview passes through Telegram's servers. `ATLAS_PRIVACY_MODE` currently redacts the audit log only, not the Telegram preview (tracked in the issue tracker). Don't route PHI-bearing sessions through the Telegram relay without accounting for this.
+- The Why Layer sends recent audit entries (tool names, verdicts, timestamps) and behavioral baselines to Ollama. Configure a local Ollama instance to keep PHI on-premises. Atlas warns at startup if the endpoint is non-loopback plain HTTP.
 
 ## Contact
 

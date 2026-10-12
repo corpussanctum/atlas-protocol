@@ -35,7 +35,7 @@ import { IdentityRegistry } from "./identity-registry.js";
 import { attestAgent, enrichAuditEntry, toolToCapability, sanitizeCredential } from "./attestation.js";
 import type { AgentRole, AgentCapability, DelegationRequest } from "./agent-identity.js";
 import { isDelegatedCredential } from "./agent-identity.js";
-import { assessWindow, loadWhyConfig, stubAssessment } from "./why-engine.js";
+import { assessWindow, describeWhyEndpoint, loadWhyConfig, stubAssessment } from "./why-engine.js";
 import type { WhyAssessment, AuditEventWindow } from "./why-engine.js";
 import { shouldTrigger, formatTelegramAlert, loadTriggerConfig } from "./why-triggers.js";
 import type { WhyTrigger } from "./why-triggers.js";
@@ -174,6 +174,10 @@ async function main(): Promise<void> {
 
   // Why Layer state
   const whyConfig = loadWhyConfig();
+  const whyEndpoint = describeWhyEndpoint(whyConfig.baseUrl);
+  if (whyConfig.enabled && whyEndpoint.warning) {
+    console.error(`[atlas] Warning: ${whyEndpoint.warning}`);
+  }
   const triggerConfig = loadTriggerConfig();
   let lastWhyAssessmentTime: Date | undefined;
   const recentAuditEntries: AuditEntry[] = [];
@@ -219,6 +223,12 @@ async function main(): Promise<void> {
       audit_log_path: config.audit_log_path,
       config_path: config.config_path,
       hash_algorithm: "sha3-256",
+      why_engine_endpoint: whyConfig.enabled
+        ? { loopback: whyEndpoint.loopback, encrypted: whyEndpoint.encrypted }
+        : null,
+      ...(config.rejected_file_fields?.length
+        ? { rejected_config_fields: config.rejected_file_fields }
+        : {}),
     },
   });
   if (identityContext.loaded) {

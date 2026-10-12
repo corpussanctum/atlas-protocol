@@ -80,7 +80,7 @@ describe("CredoTransport", () => {
   describe("createInvitation", () => {
     it("creates an OOB invitation URL with configured domain", async () => {
       const url = await transport.createInvitation();
-      assert.ok(url.startsWith("https://atlas.example.com"));
+      assert.equal(new URL(url).origin, "https://atlas.example.com");
       assert.ok(url.includes("oob="));
       assert.equal(agent.invitationsCreated, 1);
     });
