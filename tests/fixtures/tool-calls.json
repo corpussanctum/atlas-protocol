@@ -1,0 +1,157 @@
+[
+  {
+    "tool": "atlas_status",
+    "isError": false,
+    "text": "{\n  \"version\": \"1.0.5\",\n  \"protocol_version\": \"0.8.4\",\n  \"spec_version\": \"1.1.0\",\n  \"telegram_connected\": false,\n  \"channel_ready\": false,\n  \"allowed_chat_ids\": [],\n  \"pending_verdicts\": 0,\n  \"last_inbound_chat_id\": null,\n  \"policy_rules_count\": 96,\n  \"permission_timeout_seconds\": 120,\n  \"velocity_limit_per_minute\": 30,\n  \"audit\": {\n    \"log_path\": \"<DATA_DIR>/audit.jsonl\",\n    \"hash_algorithm\": \"sha3-256\",\n    \"hmac_signing\": false,\n    \"quantum_signing\": {\n      \"available\": true,\n      \"algorithm\": \"ML-DSA-65\",\n      \"public_key_hash\": \"<HEX>\",\n      \"public_key_hash_sha3\": \"<HEX>\",\n      \"key_path\": \"<DATA_DIR>/quantum-keypair.json\",\n      \"archived_key_count\": 0\n    }\n  },\n  \"agent_identity\": {\n    \"session_agent_id\": null,\n    \"registry_size\": 0,\n    \"active_credentials\": 0,\n    \"bootstrap_mode\": true\n  },\n  \"data_dir\": \"<DATA_DIR>\",\n  \"quiet_mode\": {\n    \"enabled\": false,\n    \"min_maturity\": \"mature\",\n    \"quiet_tools\": [\n      \"Read\",\n      \"Glob\",\n      \"Grep\"\n    ]\n  },\n  \"break_glass\": {\n    \"active\": false,\n    \"operator_key_id\": null\n  },\n  \"identity\": {\n    \"loaded\": false,\n    \"principal\": null,\n    \"max_consent_tier\": null,\n    \"consent_boundaries\": 0,\n    \"sensitivity_classifications\": 0,\n    \"audit_redact_fields\": [],\n    \"briefcase_path\": null\n  }\n}"
+  },
+  {
+    "tool": "atlas_test_policy",
+    "isError": false,
+    "text": "✅ All 79 policy fixtures passed (96 rules)\n\nMalicious: 43/43\nBenign:    21/21\nAsk:       9/9\nEdge:      6/6\nPass rate: 100.0%"
+  },
+  {
+    "tool": "atlas_identity_list",
+    "isError": false,
+    "text": "[]"
+  },
+  {
+    "tool": "atlas_identity_register",
+    "isError": false,
+    "text": "{\n  \"agentId\": \"<DID1>\",\n  \"name\": \"orchestrator\",\n  \"role\": \"orchestrator\",\n  \"issuedAt\": \"<TS>\",\n  \"expiresAt\": \"<TS>\",\n  \"publicKey\": \"<HEX>\",\n  \"capabilities\": [\n    \"file:read\",\n    \"file:write\",\n    \"process:spawn\"\n  ],\n  \"version\": \"0.5.0\",\n  \"revoked\": false,\n  \"issuerSignature\": \"<SIG>\",\n  \"credentialHash\": \"<HEX>\"\n}"
+  },
+  {
+    "tool": "atlas_identity_verify",
+    "isError": false,
+    "text": "{\n  \"valid\": true,\n  \"agentId\": \"<DID1>\",\n  \"expired\": false,\n  \"revoked\": false\n}"
+  },
+  {
+    "tool": "atlas_identity_list",
+    "isError": false,
+    "text": "[\n  {\n    \"agentId\": \"<DID1>\",\n    \"name\": \"orchestrator\",\n    \"role\": \"orchestrator\",\n    \"issuedAt\": \"<TS>\",\n    \"expiresAt\": \"<TS>\",\n    \"publicKey\": \"<HEX>\",\n    \"capabilities\": [\n      \"file:read\",\n      \"file:write\",\n      \"process:spawn\"\n    ],\n    \"version\": \"0.5.0\",\n    \"revoked\": false,\n    \"issuerSignature\": \"<SIG>\",\n    \"credentialHash\": \"<HEX>\",\n    \"timeRemainingMs\": <N>,\n    \"timeRemainingHuman\": \"<DURATION>\"\n  }\n]"
+  },
+  {
+    "tool": "atlas_identity_delegate",
+    "isError": false,
+    "text": "{\n  \"agentId\": \"<DID2>\",\n  \"name\": \"reader\",\n  \"role\": \"tool-caller\",\n  \"issuedAt\": \"<TS>\",\n  \"expiresAt\": \"<TS>\",\n  \"publicKey\": \"<HEX>\",\n  \"capabilities\": [\n    \"file:read\"\n  ],\n  \"version\": \"0.5.0\",\n  \"revoked\": false,\n  \"delegated\": true,\n  \"delegation\": {\n    \"rootId\": \"<DID1>\",\n    \"parentId\": \"<DID1>\",\n    \"depth\": 1,\n    \"chainSignature\": \"<SIG>\"\n  },\n  \"issuerSignature\": \"<SIG>\",\n  \"credentialHash\": \"<HEX>\"\n}"
+  },
+  {
+    "tool": "atlas_identity_delegate",
+    "isError": true,
+    "text": "Error: Delegation failed: CAPABILITY_ESCALATION"
+  },
+  {
+    "tool": "atlas_identity_tree",
+    "isError": false,
+    "text": "{\n  \"root\": {\n    \"agentId\": \"<DID1>\",\n    \"name\": \"orchestrator\",\n    \"role\": \"orchestrator\",\n    \"issuedAt\": \"<TS>\",\n    \"expiresAt\": \"<TS>\",\n    \"publicKey\": \"<HEX>\",\n    \"capabilities\": [\n      \"file:read\",\n      \"file:write\",\n      \"process:spawn\"\n    ],\n    \"version\": \"0.5.0\",\n    \"revoked\": false,\n    \"issuerSignature\": \"<SIG>\",\n    \"credentialHash\": \"<HEX>\"\n  },\n  \"children\": [\n    {\n      \"agentId\": \"<DID2>\",\n      \"name\": \"reader\",\n      \"role\": \"tool-caller\",\n      \"issuedAt\": \"<TS>\",\n      \"expiresAt\": \"<TS>\",\n      \"publicKey\": \"<HEX>\",\n      \"capabilities\": [\n        \"file:read\"\n      ],\n      \"version\": \"0.5.0\",\n      \"revoked\": false,\n      \"delegated\": true,\n      \"delegation\": {\n        \"rootId\": \"<DID1>\",\n        \"parentId\": \"<DID1>\",\n        \"depth\": 1,\n        \"chainSignature\": \"<SIG>\"\n      },\n      \"issuerSignature\": \"<SIG>\",\n      \"credentialHash\": \"<HEX>\"\n    }\n  ],\n  \"descendants\": [\n    {\n      \"agentId\": \"<DID2>\",\n      \"name\": \"reader\",\n      \"role\": \"tool-caller\",\n      \"issuedAt\": \"<TS>\",\n      \"expiresAt\": \"<TS>\",\n      \"publicKey\": \"<HEX>\",\n      \"capabilities\": [\n        \"file:read\"\n      ],\n      \"version\": \"0.5.0\",\n      \"revoked\": false,\n      \"delegated\": true,\n      \"delegation\": {\n        \"rootId\": \"<DID1>\",\n        \"parentId\": \"<DID1>\",\n        \"depth\": 1,\n        \"chainSignature\": \"<SIG>\"\n      },\n      \"issuerSignature\": \"<SIG>\",\n      \"credentialHash\": \"<HEX>\"\n    }\n  ]\n}"
+  },
+  {
+    "tool": "atlas_baseline_list",
+    "isError": false,
+    "text": "[]"
+  },
+  {
+    "tool": "atlas_baseline_get",
+    "isError": false,
+    "text": "{\"error\":\"NO_BASELINE\",\"message\":\"No baseline exists for <DID1>\"}"
+  },
+  {
+    "tool": "atlas_baseline_drift",
+    "isError": false,
+    "text": "{\n  \"driftDetected\": false,\n  \"recommendation\": \"allow\",\n  \"note\": \"No baseline exists for this agent\"\n}"
+  },
+  {
+    "tool": "atlas_why_assess",
+    "isError": false,
+    "text": "{\n  \"windowSummary\": \"2 events (stub)\",\n  \"expertAssessments\": [],\n  \"synthesis\": \"Why engine disabled\",\n  \"overallRisk\": \"nominal\",\n  \"overallRiskScore\": 0,\n  \"recommendedAction\": \"allow\",\n  \"anomalyDetected\": false,\n  \"inferredIntent\": \"Unknown — Why engine unavailable\",\n  \"threatNarrative\": \"No threat narrative — Why engine unavailable\",\n  \"generatedAt\": \"<TS>\",\n  \"modelUsed\": \"none\",\n  \"researchArtifact\": {\n    \"eventCount\": 2,\n    \"uniqueAgents\": [],\n    \"uniqueTechniques\": [],\n    \"tacticsObserved\": [],\n    \"riskProgression\": [\n      0,\n      0\n    ],\n    \"anomalySignals\": [],\n    \"temporalPattern\": \"burst\",\n    \"derivedFrom\": \"<HEX>\",\n    \"assessedAt\": \"<TS>\",\n    \"caution\": \"AI-generated analysis. Verify against primary audit trail.\"\n  }\n}"
+  },
+  {
+    "tool": "atlas_break_glass_status",
+    "isError": false,
+    "text": "{\n  \"active\": false,\n  \"operator_key_id\": null\n}"
+  },
+  {
+    "tool": "atlas_break_glass_activate",
+    "isError": true,
+    "text": "Break-glass cannot be activated from an agent session. The operator must run `atlas-operator break-glass --reason \"…\"` on the host (requires the operator key passphrase). No operator key is configured; the operator must first run `atlas-operator keygen`."
+  },
+  {
+    "tool": "atlas_break_glass_revoke",
+    "isError": false,
+    "text": "No active break-glass token found."
+  },
+  {
+    "tool": "atlas_proximity_status",
+    "isError": false,
+    "text": "{\n  \"profile\": \"ProximityMesh\",\n  \"hardware\": {\n    \"adapter\": \"mock\",\n    \"source\": \"default\",\n    \"simulated\": true,\n    \"uwb\": true,\n    \"ble\": true,\n    \"nfc\": true\n  },\n  \"config\": {\n    \"maxProximityMeters\": 10,\n    \"proofTtlSeconds\": 30,\n    \"requireSts\": true,\n    \"preferredNoisePattern\": \"IK\",\n    \"bleServiceUuid\": \"<UUID3>\",\n    \"requireUwb\": true,\n    \"sessionTimeoutSeconds\": 3600,\n    \"reRangeIntervalSeconds\": 60\n  },\n  \"advertising\": false,\n  \"activeSessions\": 0,\n  \"sessions\": []\n}"
+  },
+  {
+    "tool": "atlas_proximity_sessions",
+    "isError": false,
+    "text": "No active proximity mesh sessions."
+  },
+  {
+    "tool": "atlas_proximity_scan",
+    "isError": false,
+    "text": "No Atlas agents discovered nearby."
+  },
+  {
+    "tool": "atlas_proximity_connect",
+    "isError": true,
+    "text": "Agent <DID4> not found in registry"
+  },
+  {
+    "tool": "atlas_proximity_disconnect",
+    "isError": false,
+    "text": "Session nope closed."
+  },
+  {
+    "tool": "atlas_identity_revoke",
+    "isError": false,
+    "text": "Agent <DID2> revoked: snapshot"
+  },
+  {
+    "tool": "atlas_identity_cascade_revoke",
+    "isError": false,
+    "text": "{\n  \"revokedCount\": 2,\n  \"revokedIds\": [\n    \"<DID1>\",\n    \"<DID2>\"\n  ]\n}"
+  },
+  {
+    "tool": "atlas_identity_list",
+    "isError": false,
+    "text": "[\n  {\n    \"agentId\": \"<DID1>\",\n    \"name\": \"orchestrator\",\n    \"role\": \"orchestrator\",\n    \"issuedAt\": \"<TS>\",\n    \"expiresAt\": \"<TS>\",\n    \"publicKey\": \"<HEX>\",\n    \"capabilities\": [\n      \"file:read\",\n      \"file:write\",\n      \"process:spawn\"\n    ],\n    \"version\": \"0.5.0\",\n    \"revoked\": true,\n    \"issuerSignature\": \"<SIG>\",\n    \"credentialHash\": \"<HEX>\",\n    \"revokedAt\": \"<TS>\",\n    \"revokedReason\": \"snapshot\",\n    \"timeRemainingMs\": <N>,\n    \"timeRemainingHuman\": \"<DURATION>\"\n  },\n  {\n    \"agentId\": \"<DID2>\",\n    \"name\": \"reader\",\n    \"role\": \"tool-caller\",\n    \"issuedAt\": \"<TS>\",\n    \"expiresAt\": \"<TS>\",\n    \"publicKey\": \"<HEX>\",\n    \"capabilities\": [\n      \"file:read\"\n    ],\n    \"version\": \"0.5.0\",\n    \"revoked\": true,\n    \"delegated\": true,\n    \"delegation\": {\n      \"rootId\": \"<DID1>\",\n      \"parentId\": \"<DID1>\",\n      \"depth\": 1,\n      \"chainSignature\": \"<SIG>\"\n    },\n    \"issuerSignature\": \"<SIG>\",\n    \"credentialHash\": \"<HEX>\",\n    \"revokedAt\": \"<TS>\",\n    \"revokedReason\": \"snapshot\",\n    \"timeRemainingMs\": <N>,\n    \"timeRemainingHuman\": \"<DURATION>\"\n  }\n]"
+  },
+  {
+    "tool": "atlas_key_rotate",
+    "isError": true,
+    "text": "Error: no active agent — register an identity first"
+  },
+  {
+    "tool": "atlas_audit_verify",
+    "isError": false,
+    "text": "✅ Audit log integrity verified.\n\nEntries: 8\nML-DSA-65 signed: 8\nHMAC signed: 0"
+  },
+  {
+    "tool": "atlas_audit_archives",
+    "isError": false,
+    "text": "{\n  \"archive_count\": 0,\n  \"total_entries\": 0,\n  \"total_size_bytes\": 0,\n  \"total_size_mb\": \"<N>\",\n  \"archives\": []\n}"
+  },
+  {
+    "tool": "atlas_audit_rotate",
+    "isError": false,
+    "text": "{\n  \"rotated\": true,\n  \"archived_as\": \"audit-<STAMP>.jsonl\",\n  \"entries\": 8,\n  \"size_mb\": \"<N>\",\n  \"chain_anchor\": \"<HEX>...\"\n}"
+  },
+  {
+    "tool": "atlas_reply",
+    "isError": true,
+    "text": "Error: No allowed Telegram chat IDs configured"
+  },
+  {
+    "tool": "atlas_identity_register",
+    "isError": true,
+    "text": "Error: name, role, and capabilities are required"
+  },
+  {
+    "tool": "atlas_no_such_tool",
+    "isError": true,
+    "text": "Unknown tool: atlas_no_such_tool"
+  }
+]

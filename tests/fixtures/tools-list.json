@@ -1,0 +1,594 @@
+[
+  {
+    "name": "atlas_reply",
+    "description": "Send a reply message to the Telegram operator. Defaults to the most recent authorized chat unless chat_id or broadcast is provided.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "The message text to send"
+        },
+        "chat_id": {
+          "type": "integer",
+          "description": "Optional Telegram chat ID"
+        },
+        "broadcast": {
+          "type": "boolean",
+          "description": "Send to all authorized chats"
+        },
+        "raw_html": {
+          "type": "boolean",
+          "description": "Send as trusted Telegram HTML"
+        }
+      },
+      "required": [
+        "message"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_audit_verify",
+    "description": "Verify audit log integrity: SHA3-256 chain, HMAC, and ML-DSA-65 signatures.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_status",
+    "description": "Get Atlas runtime status including identity registry, quantum signing, and Telegram state.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_identity_register",
+    "description": "Register a new agent identity with the gatekeeper. Returns a signed credential. First registration (bootstrap) is unrestricted. Subsequent registrations require identity:register capability.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Agent display name"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "orchestrator",
+            "tool-caller",
+            "observer",
+            "admin"
+          ],
+          "description": "Agent role"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "file:read",
+              "file:write",
+              "file:delete",
+              "shell:exec",
+              "shell:read",
+              "network:outbound",
+              "network:inbound",
+              "process:spawn",
+              "process:kill",
+              "credential:read",
+              "audit:read",
+              "identity:register",
+              "identity:revoke"
+            ]
+          },
+          "description": "List of granted capabilities"
+        },
+        "ttl_hours": {
+          "type": "number",
+          "description": "Credential TTL in hours (default: 24)"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "capabilities"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_identity_verify",
+    "description": "Verify an agent credential by agentId.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "The did:atlas:<uuid> to verify"
+        }
+      },
+      "required": [
+        "agent_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_identity_list",
+    "description": "List agent credentials. Filter: active, revoked, expired, or all.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "filter": {
+          "type": "string",
+          "enum": [
+            "active",
+            "revoked",
+            "expired",
+            "all"
+          ],
+          "description": "Filter (default: active)"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_identity_revoke",
+    "description": "Revoke an agent credential by agentId.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "The did:atlas:<uuid> to revoke"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for revocation"
+        }
+      },
+      "required": [
+        "agent_id",
+        "reason"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "atlas_identity_delegate",
+    "description": "Delegate a scoped sub-credential from a parent agent. Child capabilities must be a subset of parent's. Max depth: 3.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "parent_agent_id": {
+          "type": "string",
+          "description": "Parent did:atlas:<uuid>"
+        },
+        "child_name": {
+          "type": "string",
+          "description": "Child agent display name"
+        },
+        "child_role": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "orchestrator",
+            "tool-caller",
+            "observer",
+            "admin"
+          ],
+          "description": "Child agent role"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "file:read",
+              "file:write",
+              "file:delete",
+              "shell:exec",
+              "shell:read",
+              "network:outbound",
+              "network:inbound",
+              "process:spawn",
+              "process:kill",
+              "credential:read",
+              "audit:read",
+              "identity:register",
+              "identity:revoke"
+            ]
+          },
+          "description": "Capabilities (must be subset of parent)"
+        },
+        "ttl_hours": {
+          "type": "number",
+          "description": "TTL in hours (capped at parent remaining)"
+        }
+      },
+      "required": [
+        "parent_agent_id",
+        "child_name",
+        "child_role",
+        "capabilities"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_identity_cascade_revoke",
+    "description": "Revoke a parent credential and all descendants recursively.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "parent_agent_id": {
+          "type": "string",
+          "description": "Parent did:atlas:<uuid> to revoke"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for revocation"
+        }
+      },
+      "required": [
+        "parent_agent_id",
+        "reason"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "atlas_identity_tree",
+    "description": "Get the full credential tree rooted at an agentId.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "Root did:atlas:<uuid>"
+        }
+      },
+      "required": [
+        "agent_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_key_rotate",
+    "description": "Rotate the gatekeeper ML-DSA-65 issuer key (SPEC §4.5). Logs KEY_ROTATION signed by the old key, re-issues all active credentials with the new key, and retains the last 3 public keys for historical verification.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Rotation reason (e.g. scheduled rotation, key compromise)"
+        }
+      },
+      "required": [
+        "reason"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "atlas_baseline_get",
+    "description": "Get the behavioral baseline profile for an agent.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "The did:atlas:<uuid>"
+        }
+      },
+      "required": [
+        "agent_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_baseline_drift",
+    "description": "Run drift detection against an agent's baseline using the current audit window.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "The did:atlas:<uuid>"
+        },
+        "window_minutes": {
+          "type": "number",
+          "description": "Time window in minutes (default: 60)"
+        }
+      },
+      "required": [
+        "agent_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_baseline_list",
+    "description": "List all behavioral baseline profiles, optionally filtered.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "maturity": {
+          "type": "string",
+          "enum": [
+            "insufficient",
+            "developing",
+            "established",
+            "mature"
+          ],
+          "description": "Filter by maturity level"
+        },
+        "role": {
+          "type": "string",
+          "description": "Filter by agent role"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_test_policy",
+    "description": "Run policy regression tests against known malicious/benign fixtures. Returns pass/fail counts and details of any failures. Use after rule changes to verify no regressions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "verbose": {
+          "type": "boolean",
+          "description": "Include all results, not just failures (default: false)"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_break_glass_activate",
+    "description": "Request a break-glass emergency override. Always refused from an agent session and reported to the operator: only the operator can activate break-glass, via `atlas-operator break-glass` on the host (operator-key signed).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Why break-glass is needed"
+        },
+        "ttl_minutes": {
+          "type": "number",
+          "description": "Token lifetime in minutes (default: 60, max: 240)"
+        },
+        "max_requests": {
+          "type": "number",
+          "description": "Max auto-approved requests (0 = unlimited, default: 0)"
+        }
+      },
+      "required": [
+        "reason"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_break_glass_status",
+    "description": "Check current break-glass status.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_break_glass_revoke",
+    "description": "Revoke an active break-glass token immediately.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "atlas_audit_rotate",
+    "description": "Manually trigger audit log rotation. Archives the current log and starts a new one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_audit_archives",
+    "description": "List archived audit log files with metadata, or verify archive integrity.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "verify": {
+          "type": "boolean",
+          "description": "Verify integrity of all archives (default: false)"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_why_assess",
+    "description": "Manually trigger a Why Layer assessment on the current audit event window. Returns a CoE analysis with anomaly detection, intent inference, and threat narrative.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "type": "string",
+          "description": "Filter to specific agent (optional)"
+        },
+        "window_minutes": {
+          "type": "number",
+          "description": "Time window in minutes (default: 60)"
+        },
+        "window_size": {
+          "type": "number",
+          "description": "Max entries to analyze (default: 20)"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_proximity_status",
+    "description": "Get proximity mesh status: hardware availability, active sessions, advertising state, and configuration.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_proximity_scan",
+    "description": "Scan for nearby Atlas agents via BLE. Returns discovered peers with estimated distances.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "duration_ms": {
+          "type": "number",
+          "description": "Scan duration in milliseconds (default: 5000)"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_proximity_connect",
+    "description": "Establish a secure mesh session with a discovered peer. Executes the full 7-step protocol: BLE discovery → UWB ranging → Noise handshake → credential exchange → policy evaluation → session establishment → audit logging.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "type": "string",
+          "description": "Device ID of the discovered peer"
+        },
+        "agent_id": {
+          "type": "string",
+          "description": "Local agent's did:atlas:<uuid> to present"
+        }
+      },
+      "required": [
+        "device_id",
+        "agent_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_proximity_sessions",
+    "description": "List active proximity mesh sessions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "atlas_proximity_disconnect",
+    "description": "Close a proximity mesh session.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "Session ID to close"
+        }
+      },
+      "required": [
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    }
+  }
+]

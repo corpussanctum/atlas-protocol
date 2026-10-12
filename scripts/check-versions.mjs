@@ -38,7 +38,7 @@ const credential = match("src/agent-identity.ts", /CREDENTIAL_VERSION\s*=\s*"([\
 
 const marketplace = json(".claude-plugin/marketplace.json");
 const lock = json("package-lock.json");
-const indexTs = read("src/index.ts");
+
 const readme = read("README.md");
 const specMd = read("SPEC.md");
 
@@ -49,8 +49,8 @@ const row = (text, label) => {
 };
 
 const checks = [
-  ["src/index.ts VERSION", match("src/index.ts", /const VERSION\s*=\s*"([\d.]+)"/, "VERSION"), impl],
-  ["src/index.ts SPEC_VERSION", match("src/index.ts", /const SPEC_VERSION\s*=\s*"([\d.]+)"/, "SPEC_VERSION"), spec],
+  ["src/version.ts VERSION", match("src/version.ts", /export const VERSION\s*=\s*"([\d.]+)"/, "VERSION"), impl],
+  ["src/version.ts SPEC_VERSION", match("src/version.ts", /export const SPEC_VERSION\s*=\s*"([\d.]+)"/, "SPEC_VERSION"), spec],
   [".claude-plugin/plugin.json", json(".claude-plugin/plugin.json").version, impl],
   ...(marketplace.plugins ?? []).map((p, i) => [`.claude-plugin/marketplace.json plugins[${i}]`, p.version, impl]),
   ["package-lock.json", lock.version, impl],
@@ -66,8 +66,13 @@ const checks = [
   ["CHANGELOG latest release", match("CHANGELOG.md", /^## \[(\d[\d.]*)\]/m, "latest release heading"), impl],
 ];
 
-// Documented MCP tool count vs tools actually registered in index.ts
-const toolCount = String(new Set(indexTs.match(/name:\s*"atlas_[a-z_]+"/g) ?? []).size);
+// MCP tools registered in src/mcp/tools/*.ts
+const toolFiles = execFileSync("git", ["ls-files", "src/mcp/tools"], { cwd: root, encoding: "utf-8" })
+  .split("\n").filter((f) => f.endsWith(".ts"));
+const registeredTools = new Set(
+  toolFiles.flatMap((f) => [...read(f).matchAll(/^\s*name:\s*"(atlas_[a-z_]+)"/gm)].map((m) => m[1])),
+);
+const toolCount = String(registeredTools.size);
 for (const m of readme.matchAll(/(\d+) (?:MCP )?tools\b/g)) {
   checks.push([`README "${m[0]}"`, m[1], toolCount]);
 }
@@ -79,8 +84,7 @@ function compareSets(label, inCode, inDocs) {
   for (const name of inDocs) if (!inCode.has(name)) setChecks.push(`${label}: "${name}" is documented but not in code`);
 }
 
-// MCP tools: registered in index.ts vs README tool tables
-const registeredTools = new Set([...indexTs.matchAll(/name:\s*"(atlas_[a-z_]+)"/g)].map((m) => m[1]));
+// MCP tools: registered vs README tool tables
 const readmeTools = new Set([...readme.matchAll(/^\|\s*`(atlas_[a-z_]+)`\s*\|/gm)].map((m) => m[1]));
 compareSets("README tool table", registeredTools, readmeTools);
 
