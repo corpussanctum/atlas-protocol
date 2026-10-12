@@ -13,6 +13,9 @@ permissions:
 jobs:
   analyze:
     name: analyze (javascript-typescript)
+    # Code scanning on private repos needs GitHub Advanced Security; run only
+    # while the repo is public so a private phase doesn't fail every push.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     permissions:
       security-events: write

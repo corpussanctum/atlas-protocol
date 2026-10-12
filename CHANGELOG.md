@@ -35,7 +35,7 @@ All notable changes to Atlas Protocol are documented in this file.
   lockfile, README and SPEC §11.2 version maps, and CHANGELOG.
 - CI: version-consistency job, `npm audit --omit=dev --audit-level=high` for
   both packages, and a package-contents check. CodeQL (`security-extended`)
-  workflow and Dependabot for npm + GitHub Actions.
+  workflow (runs while the repo is public) and Dependabot for npm + GitHub Actions.
 - GitHub issue templates (bug, security-hardening task) and a PR template.
 
 ## [1.0.2] - 2026-08-29
