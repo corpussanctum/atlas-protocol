@@ -45,6 +45,7 @@ import { toolDefinitions, createToolHandlers } from "./mcp/tools/index.js";
 import type { ToolContext } from "./mcp/context.js";
 import { escapeHtml } from "./html.js";
 import { createPermissionPipeline } from "./authority/permission-pipeline.js";
+import { operatorPreviewPolicyFromEnv } from "./authority/operator-preview.js";
 
 
 /** Claude Code channel permission relay (non-spec notification). */
@@ -374,6 +375,7 @@ async function main(): Promise<void> {
     quietConfig,
     breakGlass,
     config,
+    previewPolicy: operatorPreviewPolicyFromEnv(),
   });
 
   mcp.setNotificationHandler(PERMISSION_REQUEST_METHOD, { params: PermissionRequestParams }, async (params) => {
