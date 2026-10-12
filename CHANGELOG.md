@@ -17,6 +17,14 @@ All notable changes to Atlas Protocol are documented in this file.
   logs a startup warning, and `CONFIG_LOADED` records whether the endpoint is
   loopback/encrypted. Assessments send audit entries and baseline profiles to it.
 
+### Added
+- **Audit event catalog** (`docs/AUDIT_EVENTS.md`): all 25 event types and the 10
+  `meta.event_detail` sub-events (with their parent event), including 3
+  reserved proximity events that are declared but not yet emitted.
+- `check:versions` now checks in both directions that the README tool table
+  matches registered tools, and that the audit catalog matches the
+  `AuditEventType` union and every `event_detail` emitted in `src/` (#3).
+
 ### Fixed
 - README listed Why Layer window defaults as 50 entries / 30 minutes; the code
   uses 20 / 60.

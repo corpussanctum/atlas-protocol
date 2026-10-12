@@ -381,13 +381,15 @@ Atlas exposes 26 MCP tools to the Claude Code session:
 | `atlas_audit_rotate` | Manually trigger audit log rotation |
 | `atlas_audit_archives` | List or verify archived audit log files |
 
+Every audit event type and `event_detail` sub-event is listed in [docs/AUDIT_EVENTS.md](docs/AUDIT_EVENTS.md).
+
 ### Proximity mesh (research / demo)
 
 Hardware adapters are untested reference drivers. Use the mock drivers or the Docker swarm demo unless you have validated UWB hardware.
 
 | Tool | Description |
 |---|---|
-| `atlas_proximity_status` | Hardware availability, active sessions, advertising state, config |
+| `atlas_proximity_status` | Selected hardware adapter (and whether it is simulated), availability, active sessions, advertising state, config |
 | `atlas_proximity_scan` | Scan for nearby Atlas agents via BLE |
 | `atlas_proximity_connect` | Establish a secure mesh session (7-step protocol) |
 | `atlas_proximity_sessions` | List active proximity mesh sessions |
