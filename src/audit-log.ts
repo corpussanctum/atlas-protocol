@@ -16,15 +16,18 @@
  * (no hash_algorithm field) and validates them with the original algorithm.
  */
 
-import { createHmac, createHash, randomUUID } from "node:crypto";
+import { createHmac, createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
   existsSync,
+  fstatSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
   readSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeSync,
@@ -172,8 +175,9 @@ function acquireLock(lockPath: string): boolean {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") return false;
     }
     try {
-      if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
-        unlinkSync(lockPath);
+      const held = statSync(lockPath);
+      if (Date.now() - held.mtimeMs > LOCK_STALE_MS) {
+        breakStaleLock(lockPath, held.ino);
         continue;
       }
     } catch {
@@ -181,6 +185,33 @@ function acquireLock(lockPath: string): boolean {
     }
     if (Date.now() - start > LOCK_GIVE_UP_MS) return false;
     sleepSync(LOCK_POLL_MS);
+  }
+}
+
+/**
+ * Remove a stale lock without clobbering a fresh one. Two waiters can both
+ * judge the same lock stale; a plain unlink by the slower one would delete
+ * the lock the faster one just took. Instead, move it aside and check it is
+ * the inode we judged stale; if not, put it back (link fails if a newer lock
+ * already exists, in which case that one wins).
+ */
+/** @internal exported for tests */
+export function breakStaleLock(lockPath: string, staleIno: number): void {
+  const aside = `${lockPath}.stale-${process.pid}-${randomBytes(4).toString("hex")}`;
+  try {
+    renameSync(lockPath, aside);
+  } catch {
+    return; // someone else moved or released it
+  }
+  try {
+    if (statSync(aside).ino !== staleIno) linkSync(aside, lockPath);
+  } catch {
+    // a newer lock is in place
+  }
+  try {
+    unlinkSync(aside);
+  } catch {
+    // ignore
   }
 }
 
@@ -201,7 +232,7 @@ function readLastLine(path: string): string | null {
     return null;
   }
   try {
-    const size = statSync(path).size;
+    const size = fstatSync(fd).size;
     if (size === 0) return null;
     const start = Math.max(0, size - TAIL_READ_BYTES);
     const buf = Buffer.alloc(size - start);
@@ -210,7 +241,7 @@ function readLastLine(path: string): string | null {
     const nl = text.lastIndexOf("\n");
     if (nl === -1 && start > 0) {
       // Last line is longer than the tail window — fall back to a full read.
-      const lines = readFileSync(path, "utf-8").trimEnd().split("\n");
+      const lines = readFileSync(fd, "utf-8").trimEnd().split("\n");
       return lines[lines.length - 1] || null;
     }
     return text.slice(nl + 1) || null;

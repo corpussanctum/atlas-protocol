@@ -8,11 +8,11 @@
 
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, renameSync, rmSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, renameSync, rmSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash, createHmac } from "node:crypto";
-import { AuditLogger } from "../src/audit-log.js";
+import { AuditLogger, breakStaleLock } from "../src/audit-log.js";
 import { QuantumSigner } from "../src/quantum-signer.js";
 import type { AtlasConfig } from "../src/config.js";
 
@@ -830,5 +830,32 @@ describe("AuditLogger — concurrent server instances", () => {
     const entry = logger.log("CONFIG_LOADED");
     assert.equal(entry.prev_hash, sha3_256(last));
     assert.equal(entry.seq, 1);
+  });
+});
+
+describe("AuditLogger — lock and tail edge cases", () => {
+  it("breaking a stale lock never removes a fresh one that replaced it", () => {
+    const config = makeConfig();
+    const lockPath = `${config.audit_log_path}.lock`;
+    writeFileSync(lockPath, "stale");
+    const staleIno = statSync(lockPath).ino;
+    // Another waiter already broke it and took a fresh lock (distinct inode:
+    // created while the stale one still exists)
+    writeFileSync(`${lockPath}.new`, "fresh");
+    renameSync(`${lockPath}.new`, lockPath);
+    assert.notEqual(statSync(lockPath).ino, staleIno);
+
+    breakStaleLock(lockPath, staleIno);
+    assert.equal(readFileSync(lockPath, "utf-8"), "fresh");
+  });
+
+  it("resyncs from a last line longer than the tail window", () => {
+    const config = makeConfig();
+    const a = new AuditLogger(config);
+    const b = new AuditLogger(config);
+    b.log("CONFIG_LOADED", { meta: { blob: "x".repeat(100 * 1024) } });
+    const entry = a.log("SESSION_START");
+    assert.equal(entry.seq, 1);
+    assert.equal(a.verify().valid, true);
   });
 });
