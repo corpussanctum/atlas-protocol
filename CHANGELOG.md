@@ -4,6 +4,12 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-10-12
+
+Stabilization: ProximityMesh hardware selection actually works and never
+silently falls back to mocks, version drift is enforced in CI, and the
+supply chain is audited on every push.
+
 ### Fixed
 - **`ATLAS_HARDWARE_ADAPTER` had no effect.** The MCP server constructed
   `Mock{UWB,BLE,NFC}Driver` directly and never called the adapter factory, so

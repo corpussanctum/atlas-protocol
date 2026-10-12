@@ -654,7 +654,7 @@ Atlas uses four distinct version identifiers:
 | Identifier | Current value | Meaning | Where it appears |
 |---|---|---|---|
 | **Spec document version** | `"1.0.1"` | The version of this specification document. Changes with each published revision of the spec. | Header of this document |
-| **Implementation version** | `"1.0.2"` | The reference implementation (this repository). Independent of spec and protocol versions. | `package.json`, plugin manifests, `atlas_status.version`, `SESSION_START` → `meta.version` |
+| **Implementation version** | `"1.0.3"` | The reference implementation (this repository). Independent of spec and protocol versions. | `package.json`, plugin manifests, `atlas_status.version`, `SESSION_START` → `meta.version` |
 | **Credential schema version** | `"0.5.0"` | Structure of `AgentCredential` objects. Changes when fields are added/removed from the credential type. | Credential `version` field |
 | **Protocol version** | `"0.8.4"` | The wire-format protocol version governing pipeline behavior, audit format, delegation semantics, and conformance requirements. Incremented as protocol behavior changes, independent of the spec document version. | `SESSION_START` → `meta.protocol_version`, delegation authority → `version`, `ModelProvenance.protocolVersion` |
 
