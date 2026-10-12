@@ -127,7 +127,8 @@ Atlas reads configuration from environment variables, a config file (`config.jso
 | `ATLAS_AUDIT_LOG_PATH` | `<data_dir>/audit.jsonl` | Audit log location |
 | `ATLAS_DATA_DIR` | `${CLAUDE_PLUGIN_DATA}` or `~/.atlas-protocol` | Persistent state directory |
 | `ATLAS_BRIEFCASE_PATH` | — | Path to a DIB Briefcase for consent-tier enforcement |
-| `ATLAS_PRIVACY_MODE` | `false` | Force audit field redaction |
+| `ATLAS_PRIVACY_MODE` | `false` | Redact tool input from the audit log and withhold it (and the description) from Telegram approval prompts |
+| `ATLAS_TELEGRAM_SEND_INPUT` | `false` | In privacy mode, still send the input preview to Telegram. Tier 3+ sensitive data is withheld regardless |
 | `ATLAS_VELOCITY_LIMIT` | `30` | Requests per minute before anomaly flag |
 | `ATLAS_POLL_INTERVAL_MS` | `1000` | Telegram polling interval |
 | `WHY_ENGINE_MODEL` | `qwen2.5:3b` | Ollama model for Why Layer experts |

@@ -28,6 +28,14 @@ All notable changes to Atlas Protocol are documented in this file.
   a v1-era client (as Claude Code uses); a new test covers the v2 client.
 
 ### Fixed
+- **Privacy: Telegram approval prompts no longer carry PHI** (#17). Privacy
+  mode and briefcase redaction applied only to the audit log, so the first 500
+  characters of every tool input (and the description) still went through
+  Telegram's servers. The prompt now withholds both when a consent Tier 3+
+  sensitivity classification matches (always) or when `ATLAS_PRIVACY_MODE=true`
+  (unless `ATLAS_TELEGRAM_SEND_INPUT=true`). A withheld prompt shows the tool,
+  detected data types, input length and a SHA3-256 digest; verdict audit
+  entries record `meta.operator_preview_redacted`.
 - **Audit chain forks from concurrent server instances** (#30). Each Claude
   Code session runs its own Atlas server, all appending to one log, and
   `AuditLogger` read the chain head only at startup. Overlapping sessions

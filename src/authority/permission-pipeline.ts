@@ -24,6 +24,7 @@ import type { VerdictOutcome, SendReplyOptions } from "../telegram.js";
 import { attestAgent, toolToCapability } from "../attestation.js";
 import { checkQuietEligibility } from "../quiet-mode.js";
 import { escapeHtml } from "../html.js";
+import { buildOperatorPreview, operatorPreviewPolicyFromEnv, type OperatorPreviewPolicy } from "./operator-preview.js";
 
 export type Verdict = "allow" | "deny";
 
@@ -52,11 +53,14 @@ export interface PermissionPipelineDeps {
   quietConfig: QuietModeConfig;
   breakGlass: Pick<BreakGlassManager, "isActive" | "recordUsage" | "read">;
   config: Pick<AtlasConfig, "permission_timeout_seconds" | "telegram_allowed_chat_ids">;
+  /** What the operator relay may see of the request (#17). Defaults to the environment. */
+  previewPolicy?: OperatorPreviewPolicy;
 }
 
 export function createPermissionPipeline(deps: PermissionPipelineDeps): (req: PermissionRequest) => Promise<Verdict> {
   const { registry, policyEngine, audit, baselineStore, quietConfig, breakGlass, config } = deps;
   const telegram = deps.operator;
+  const previewPolicy = deps.previewPolicy ?? operatorPreviewPolicyFromEnv();
 
   // Fail-closed guard: any unexpected error yields an explicit deny, never a
   // missing verdict. Logging the failure is best-effort (audit may be the fault).
@@ -244,14 +248,17 @@ export function createPermissionPipeline(deps: PermissionPipelineDeps): (req: Pe
       }
     }
 
+    const preview = buildOperatorPreview(req, policyResult, previewPolicy);
+    const relayMeta = preview.redacted ? { operator_preview_redacted: preview.redacted } : {};
+
     let outcome: VerdictOutcome;
     let operatorError: string | undefined;
     try {
       outcome = await telegram.requestVerdict(
         req.request_id,
         req.tool_name,
-        req.description,
-        req.input_preview,
+        preview.description,
+        preview.inputPreview,
         promptFlags,
         config.permission_timeout_seconds
       );
@@ -266,7 +273,7 @@ export function createPermissionPipeline(deps: PermissionPipelineDeps): (req: Pe
         permission: req,
         policy_result: policyResult,
         verdict: "allow",
-        meta: { responder_chat_id: outcome.responder_chat_id, ...identityMeta },
+        meta: { responder_chat_id: outcome.responder_chat_id, ...identityMeta, ...relayMeta },
       });
       return "allow";
     }
@@ -276,7 +283,7 @@ export function createPermissionPipeline(deps: PermissionPipelineDeps): (req: Pe
         permission: req,
         policy_result: policyResult,
         verdict: "deny",
-        meta: { responder_chat_id: outcome.responder_chat_id, ...identityMeta },
+        meta: { responder_chat_id: outcome.responder_chat_id, ...identityMeta, ...relayMeta },
       });
       return "deny";
     }
@@ -287,6 +294,7 @@ export function createPermissionPipeline(deps: PermissionPipelineDeps): (req: Pe
       verdict: "deny",
       meta: {
         ...identityMeta,
+        ...relayMeta,
         reason: operatorError
           ? `Operator channel error: ${operatorError}`
           : config.telegram_allowed_chat_ids.length === 0

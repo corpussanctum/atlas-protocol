@@ -731,6 +731,17 @@ The reference implementation uses the Telegram Bot API for operator relay. Imple
 
 Examples: Slack, Discord, email, SMS, local console, custom webhook.
 
+A third-party relay is outside the trust boundary, so what the approval prompt carries is constrained:
+
+| Requirement | Level |
+|---|---|
+| When a sensitivity classification at consent Tier 3 or above matches the request, the prompt MUST NOT include the tool input or description | MUST |
+| When privacy mode is enabled, the prompt SHOULD NOT include the tool input or description unless the operator has explicitly opted in | SHOULD |
+| A prompt with the input withheld SHOULD identify the tool, the detected data types, the input length, and a digest of the input | SHOULD |
+| The verdict audit entry SHOULD record that the operator decided on a withheld preview, and why | SHOULD |
+
+The reference implementation uses `ATLAS_PRIVACY_MODE` and `ATLAS_TELEGRAM_SEND_INPUT` for the privacy-mode rule and records `meta.operator_preview_redacted` (`SENSITIVE_DATA` or `PRIVACY_MODE`).
+
 ---
 
 ## Appendix A: Cryptographic algorithms
