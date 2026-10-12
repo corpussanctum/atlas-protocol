@@ -4,6 +4,13 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- MCP tool definitions and handlers moved from `src/index.ts` into
+  `src/mcp/tools/<domain>.ts` with a shared `ToolContext`, and versions moved
+  to `src/version.ts`. `index.ts` went from 1818 to 535 lines (#5). Behavior
+  unchanged, as shown by new snapshot tests of `tools/list` and a scripted call
+  to all 26 tools, written before the move.
+
 ## [1.0.5] - 2026-10-12
 
 Security release: break-glass can only be activated by the operator

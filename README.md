@@ -485,7 +485,15 @@ See [`packages/atlas-didcomm-adapter/README.md`](packages/atlas-didcomm-adapter/
 
 ```
 src/
-├── index.ts               # MCP server, 26 tools, permission handler (5-step pipeline)
+├── index.ts               # MCP server wiring: startup, transport, Why Layer hooks, TTL watchdog
+├── version.ts             # Implementation + spec document versions
+├── authority/
+│   └── permission-pipeline.ts  # Transport-neutral 5-step decision pipeline (fail-closed)
+├── mcp/
+│   ├── context.ts         # Shared deps + session state for tool handlers
+│   ├── helpers.ts         # Confirmation-code files, credential time remaining
+│   └── tools/             # 26 tools by domain: core, identity, baseline, policy,
+│                          #   break-glass, audit, why, proximity
 ├── config.ts              # Configuration loader + 97 default rules
 ├── policy-engine.ts       # 97 rules, anomaly detection, velocity tracking
 ├── policy-test-runner.ts  # Runtime regression test fixtures + runner
