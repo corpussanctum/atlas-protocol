@@ -24,7 +24,7 @@ import { writeFileSync, unlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
 import { PolicyEngine } from "./policy-engine.js";
-import type { PermissionRequest, PolicyResult } from "./policy-engine.js";
+import type { PermissionRequest } from "./policy-engine.js";
 import { AuditLogger } from "./audit-log.js";
 import type { AuditEntry } from "./audit-log.js";
 import { TelegramBot } from "./telegram.js";
@@ -32,7 +32,7 @@ import { createIdentityProvider } from "./identity-provider.js";
 import type { IdentityContext } from "./identity-provider.js";
 import { QuantumSigner } from "./quantum-signer.js";
 import { IdentityRegistry } from "./identity-registry.js";
-import { attestAgent, enrichAuditEntry, toolToCapability, sanitizeCredential } from "./attestation.js";
+import { sanitizeCredential } from "./attestation.js";
 import type { AgentRole, AgentCapability, DelegationRequest } from "./agent-identity.js";
 import { isDelegatedCredential } from "./agent-identity.js";
 import { assessWindow, describeWhyEndpoint, loadWhyConfig, stubAssessment } from "./why-engine.js";
@@ -45,10 +45,12 @@ import type { DriftAssessment } from "./baseline-types.js";
 import { runPolicyTests } from "./policy-test-runner.js";
 import { BreakGlassManager } from "./break-glass.js";
 import { AuditRotationManager } from "./audit-rotation.js";
-import { checkQuietEligibility, loadQuietConfig } from "./quiet-mode.js";
+import { loadQuietConfig } from "./quiet-mode.js";
 import { ProximityMesh, loadProximityConfig, createHardwareAdapters, generateEphemeralKeypair } from "./proximity/index.js";
 import type { ProximityMeshConfig, HardwareAdapterSet } from "./proximity/index.js";
 import { PROTOCOL_VERSION } from "./protocol-version.js";
+import { escapeHtml } from "./html.js";
+import { createPermissionPipeline } from "./authority/permission-pipeline.js";
 
 const VERSION = "1.0.4";
 const SPEC_VERSION = "1.0.1";
@@ -1632,6 +1634,18 @@ async function main(): Promise<void> {
   // Permission request handler (with attestation)
   // =========================================================================
 
+  const decidePermission = createPermissionPipeline({
+    registry,
+    getSessionAgentId: () => sessionAgentId,
+    policyEngine,
+    audit,
+    operator: telegram,
+    baselineStore,
+    quietConfig,
+    breakGlass,
+    config,
+  });
+
   mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
     const req: PermissionRequest = {
       request_id: params.request_id,
@@ -1639,230 +1653,7 @@ async function main(): Promise<void> {
       description: params.description,
       input_preview: params.input_preview,
     };
-
-    // --- Step 1: Agent attestation (before policy evaluation) ---------------
-    const requiredCap = toolToCapability(req.tool_name);
-    const attestation = attestAgent(registry, sessionAgentId, requiredCap);
-
-    // Enrich the initial permission request log with identity
-    const enrichedMeta = {
-      agentId: attestation.agentId,
-      identityVerified: attestation.identityVerified,
-    };
-
-    audit.log("PERMISSION_REQUEST", {
-      permission: req,
-      meta: enrichedMeta,
-    });
-
-    // If attestation failed and registry is not empty → deny immediately
-    if (attestation.denyReason) {
-      const entry = enrichAuditEntry(
-        {
-          id: "",
-          timestamp: "",
-          event: "POLICY_DENY",
-          prev_hash: "",
-          permission: req,
-          verdict: "deny",
-        },
-        attestation
-      );
-
-      audit.log("POLICY_DENY", {
-        permission: req,
-        verdict: "deny",
-        meta: {
-          attestation_deny: attestation.denyReason,
-          agentId: attestation.agentId,
-          identityVerified: false,
-          agentRole: attestation.role,
-          attestationDenyReason: attestation.denyReason,
-        },
-      });
-
-      // Format human-readable denial reason
-      let denyDetail = escapeHtml(attestation.denyReason);
-      if (attestation.denyReason === "CREDENTIAL_EXPIRED") {
-        const expiredAt = attestation.credentialExpiry
-          ? new Date(attestation.credentialExpiry).toLocaleString()
-          : "unknown";
-        denyDetail = `Credential <b>expired</b> at ${escapeHtml(expiredAt)} — re-register with <code>atlas_identity_register</code>`;
-      } else if (attestation.denyReason === "CREDENTIAL_REVOKED") {
-        denyDetail = "Credential has been <b>revoked</b>";
-      } else if (attestation.denyReason === "UNREGISTERED_AGENT") {
-        denyDetail = "Agent not registered — use <code>atlas_identity_register</code>";
-      } else if (attestation.denyReason === "CAPABILITY_MISMATCH") {
-        denyDetail = `Agent lacks required capability for <code>${escapeHtml(req.tool_name)}</code>`;
-      }
-
-      await telegram
-        .sendReply(
-          `🚫 <b>IDENTITY DENIED</b> by Atlas attestation:\n` +
-            `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
-            `Agent: <code>${escapeHtml(attestation.agentId)}</code>\n` +
-            `Reason: ${denyDetail}`,
-          { broadcast: true }
-        )
-        .catch(() => {});
-
-      sendVerdict(mcp, req.request_id, "deny");
-      return;
-    }
-
-    // --- Step 2: Policy evaluation ------------------------------------------
-    const policyResult: PolicyResult = policyEngine.evaluate(req);
-    if (policyResult.anomaly_flags.length > 0) {
-      audit.log("ANOMALY_DETECTED", {
-        permission: req,
-        policy_result: policyResult,
-        meta: { flags: policyResult.anomaly_flags, ...enrichedMeta },
-      });
-    }
-
-    // Build identity meta to attach to all audit entries
-    const identityMeta = {
-      agentId: attestation.agentId,
-      identityVerified: attestation.identityVerified,
-      agentRole: attestation.role,
-      credentialExpiry: attestation.credentialExpiry,
-    };
-
-    if (policyResult.verdict === "deny") {
-      audit.log("POLICY_DENY", {
-        permission: req,
-        policy_result: policyResult,
-        verdict: "deny",
-        meta: identityMeta,
-      });
-
-      const reason = policyResult.matched_rule?.reason || "Policy rule match";
-      const mitreTag = policyResult.matched_rule?.mitre_id
-        ? `\nMITRE: <code>${escapeHtml(policyResult.matched_rule.mitre_id)}</code>`
-        : "";
-      const sensitivityInfo = policyResult.sensitivity_matches.length > 0
-        ? `\nData: ${policyResult.sensitivity_matches.map((s) => s.data_type).join(", ")}`
-        : "";
-      await telegram
-        .sendReply(
-          `🚫 <b>AUTO-DENIED</b> by Atlas policy:\n` +
-            `Tool: <code>${escapeHtml(req.tool_name)}</code>\n` +
-            `Agent: <code>${escapeHtml(attestation.agentId)}</code>\n` +
-            `Reason: ${escapeHtml(reason)}${mitreTag}${sensitivityInfo}`,
-          { broadcast: true }
-        )
-        .catch(() => {});
-
-      sendVerdict(mcp, req.request_id, "deny");
-      return;
-    }
-
-    if (policyResult.verdict === "allow") {
-      audit.log("POLICY_ALLOW", {
-        permission: req,
-        policy_result: policyResult,
-        verdict: "allow",
-        meta: identityMeta,
-      });
-
-      sendVerdict(mcp, req.request_id, "allow");
-      return;
-    }
-
-    // --- Step 3: Quiet mode check (auto-approve low-risk for mature agents) --
-    if (policyResult.verdict === "ask") {
-      const agentBaseline = sessionAgentId
-        ? await baselineStore.get(sessionAgentId)
-        : undefined;
-      const quietResult = checkQuietEligibility(quietConfig, req, policyResult, attestation, agentBaseline);
-      if (quietResult.eligible) {
-        audit.log("POLICY_ALLOW", {
-          permission: req,
-          policy_result: policyResult,
-          verdict: "allow",
-          meta: {
-            ...identityMeta,
-            quiet_mode: true,
-            baseline_maturity: agentBaseline?.maturityLevel,
-            baseline_sessions: agentBaseline?.totalSessions,
-          },
-        });
-
-        sendVerdict(mcp, req.request_id, "allow");
-        return;
-      }
-    }
-
-    // --- Step 4: Break-glass check (bypass Telegram if active) ---------------
-    if (breakGlass.isActive()) {
-      breakGlass.recordUsage();
-      audit.log("POLICY_ALLOW", {
-        permission: req,
-        policy_result: policyResult,
-        verdict: "allow",
-        meta: {
-          ...identityMeta,
-          break_glass: true,
-          break_glass_reason: breakGlass.read()?.reason ?? "unknown",
-        },
-      });
-
-      sendVerdict(mcp, req.request_id, "allow");
-      return;
-    }
-
-    // --- Step 4: Forward to Telegram for human verdict ---------------------
-    const promptFlags = [...policyResult.anomaly_flags];
-    if (policyResult.sensitivity_matches.length > 0) {
-      for (const sm of policyResult.sensitivity_matches) {
-        promptFlags.push(`📋 ${sm.data_type} detected (requires consent Tier ${sm.min_tier}+)`);
-      }
-    }
-
-    const outcome = await telegram.requestVerdict(
-      req.request_id,
-      req.tool_name,
-      req.description,
-      req.input_preview,
-      promptFlags,
-      config.permission_timeout_seconds
-    );
-
-    if (outcome.decision === "allow") {
-      audit.log("HUMAN_APPROVE", {
-        permission: req,
-        policy_result: policyResult,
-        verdict: "allow",
-        meta: { responder_chat_id: outcome.responder_chat_id, ...identityMeta },
-      });
-      sendVerdict(mcp, req.request_id, "allow");
-      return;
-    }
-
-    if (outcome.decision === "deny") {
-      audit.log("HUMAN_DENY", {
-        permission: req,
-        policy_result: policyResult,
-        verdict: "deny",
-        meta: { responder_chat_id: outcome.responder_chat_id, ...identityMeta },
-      });
-      sendVerdict(mcp, req.request_id, "deny");
-      return;
-    }
-
-    audit.log("TIMEOUT_DENY", {
-      permission: req,
-      policy_result: policyResult,
-      verdict: "deny",
-      meta: {
-        ...identityMeta,
-        reason:
-          config.telegram_allowed_chat_ids.length === 0
-            ? "No authorized Telegram chat configured"
-            : "No human verdict received before timeout",
-      },
-    });
-    sendVerdict(mcp, req.request_id, "deny");
+    sendVerdict(mcp, req.request_id, await decidePermission(req));
   });
 
   // =========================================================================
@@ -2019,14 +1810,6 @@ function credentialTimeRemaining(expiresAt: string): { timeRemainingMs: number; 
   const minutes = Math.floor((ms % 3_600_000) / 60_000);
   if (hours > 0) return { timeRemainingMs: ms, timeRemainingHuman: `${hours}h ${minutes}m` };
   return { timeRemainingMs: ms, timeRemainingHuman: `${minutes}m` };
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 main().catch((err) => {
