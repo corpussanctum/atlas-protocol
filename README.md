@@ -128,6 +128,7 @@ Atlas reads configuration from environment variables, a config file (`config.jso
 | `ATLAS_DATA_DIR` | `${CLAUDE_PLUGIN_DATA}` or `~/.atlas-protocol` | Persistent state directory |
 | `ATLAS_BRIEFCASE_PATH` | — | Path to a DIB Briefcase for consent-tier enforcement |
 | `ATLAS_PRIVACY_MODE` | `false` | Redact tool input from the audit log and withhold it (and the description) from Telegram approval prompts |
+| `ATLAS_KEYSTORE_PASSPHRASE` | — | Encrypts agent signing keys at rest under `<data_dir>/agent-keys/` so delegation survives a restart. Unset: keys stay in memory only |
 | `ATLAS_TELEGRAM_SEND_INPUT` | `false` | In privacy mode, still send the input preview to Telegram. Tier 3+ sensitive data is withheld regardless |
 | `ATLAS_VELOCITY_LIMIT` | `30` | Requests per minute before anomaly flag |
 | `ATLAS_POLL_INTERVAL_MS` | `1000` | Telegram polling interval |
@@ -274,7 +275,7 @@ A session's binding to its credential lives in server memory, so after an MCP re
 atlas-operator attach --agent did:atlas:<uuid> [--ttl 10]
 ```
 
-Then the agent calls `atlas_identity_attach` in the restarted session. The token carries the operator's signature and is bound to that credential's hash, so any edit to the credential voids it. It's single-use and expires after 10 minutes (60 at most). Delegating from an attached credential still needs restart-durable agent keys (#4).
+Then the agent calls `atlas_identity_attach` in the restarted session. The token carries the operator's signature and is bound to that credential's hash, so any edit to the credential voids it. It's single-use and expires after 10 minutes (60 at most). Delegating from an attached credential works if its key was stored in the keystore (`ATLAS_KEYSTORE_PASSPHRASE`, see below).
 
 ## Quiet mode
 
@@ -635,7 +636,7 @@ cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 - The policy engine uses glob patterns and string matching, not semantic analysis. Known false positives exist (e.g., `TRUNCATE` matching the `ncat` network tool pattern). Defense in depth applies.
 - The Why Layer requires a running Ollama instance. Without it, the layer returns nominal stubs — it never blocks the gatekeeper.
 - Behavioral baselines need ~10 sessions before drift detection produces meaningful signals (maturity model handles this).
-- Agent secret keys are held in-memory only for delegation support — they do not survive process restarts.
+- Agent signing keys survive a restart only when `ATLAS_KEYSTORE_PASSPHRASE` is set, and only for agents registered or delegated while it was set. The passphrase sits in the same environment as Atlas, so it protects keys in backups, not from a same-user agent.
 - Quiet mode requires explicit opt-in (`ATLAS_QUIET_MODE=true`) and only affects read-only tools for mature agents.
 - ProximityMesh is a research/demo profile. Raspberry Pi and ESP32 adapters are untested reference drivers; iOS/Android are TypeScript stubs pending native modules; the ESP32 UART firmware is not implemented. Mock drivers are included for development.
 - Proximity session crypto is X25519 ECDH + HKDF-SHA256 + AES-256-GCM with proximity proof as additional data. It follows an IK/KK key-use pattern; it is not a byte-compatible Noise_IK handshake. ML-DSA-65 static keys are identity keys, not DH keys.

@@ -110,6 +110,8 @@ export function handlers(ctx: ToolContext): Record<string, ToolHandler> {
           registry_size: registry.size,
           active_credentials: registry.list("active").length,
           bootstrap_mode: registry.isEmpty(),
+          keystore: registry.keystoreMode,
+          session_can_delegate: !!(ctx.sessionAgentId && registry.getAgentSigner(ctx.sessionAgentId)),
           ...(ctx.sessionAgentId && registry.get(ctx.sessionAgentId)
             ? credentialTimeRemaining(registry.get(ctx.sessionAgentId)!.expiresAt)
             : {}),

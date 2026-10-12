@@ -56,7 +56,8 @@ interface EncryptedSecretKey {
   cipher: { name: "aes-256-gcm"; iv: string; tag: string; ciphertext: string };
 }
 
-const SCRYPT = { N: 1 << 16, r: 8, p: 1 } as const;
+export const SCRYPT_PARAMS = { N: 1 << 16, r: 8, p: 1 } as const;
+const SCRYPT = SCRYPT_PARAMS;
 const SCRYPT_MAXMEM = 256 * 1024 * 1024;
 export const MIN_PASSPHRASE_LENGTH = 12;
 
@@ -64,7 +65,7 @@ export function keyIdFor(publicKey: Uint8Array): string {
   return createHash("sha3-256").update(publicKey).digest("hex").slice(0, 16);
 }
 
-function deriveKey(passphrase: string, salt: Buffer, params: { N: number; r: number; p: number }): Buffer {
+export function deriveKey(passphrase: string, salt: Buffer, params: { N: number; r: number; p: number }): Buffer {
   return scryptSync(passphrase.normalize("NFKC"), salt, 32, { ...params, maxmem: SCRYPT_MAXMEM });
 }
 

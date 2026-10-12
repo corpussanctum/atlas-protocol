@@ -107,6 +107,20 @@ interface MlDsa65 {
 let _ml_dsa65: MlDsa65 | null = null;
 
 /**
+ * A signing key: raw ML-DSA-65 secret key bytes, or a SignerProvider that
+ * signs without exporting its key (#4).
+ */
+export type SigningKey = Uint8Array | { sign(message: Uint8Array): Uint8Array };
+
+function signWith(key: SigningKey, message: Uint8Array): Uint8Array {
+  if (!(key instanceof Uint8Array)) return key.sign(message);
+  if (!_ml_dsa65) {
+    throw new Error("Agent identity not initialized — call initAgentIdentity() first");
+  }
+  return _ml_dsa65.sign(key, message);
+}
+
+/**
  * Initialize the ML-DSA-65 module. Must be called once before using
  * generateAgentKeyPair(). The identity registry handles this automatically.
  */
@@ -177,7 +191,7 @@ export function buildCanonicalPayload(
  */
 export function issueCredential(
   request: CredentialIssueRequest,
-  issuerSecretKey: Uint8Array
+  issuerSecretKey: SigningKey
 ): AgentCredential {
   if (!_ml_dsa65) {
     throw new Error("Agent identity not initialized — call initAgentIdentity() first");
@@ -207,7 +221,7 @@ export function issueCredential(
 
   // Sign the canonical payload with the gatekeeper's issuer key
   const payloadBytes = new Uint8Array(Buffer.from(canonicalPayload));
-  const signatureBytes = _ml_dsa65.sign(issuerSecretKey, payloadBytes);
+  const signatureBytes = signWith(issuerSecretKey, payloadBytes);
   const issuerSignature = Buffer.from(signatureBytes).toString("base64");
 
   return {
@@ -225,7 +239,7 @@ export function issueCredential(
  */
 export function reissueCredential(
   credential: AgentCredential,
-  issuerSecretKey: Uint8Array
+  issuerSecretKey: SigningKey
 ): AgentCredential {
   if (!_ml_dsa65) {
     throw new Error("Agent identity not initialized — call initAgentIdentity() first");
@@ -243,7 +257,7 @@ export function reissueCredential(
   }
 
   const payloadBytes = new Uint8Array(Buffer.from(canonicalPayload));
-  const signatureBytes = _ml_dsa65.sign(issuerSecretKey, payloadBytes);
+  const signatureBytes = signWith(issuerSecretKey, payloadBytes);
   return {
     ...credential,
     issuerSignature: Buffer.from(signatureBytes).toString("base64"),
@@ -349,11 +363,11 @@ export function revokeCredential(
 /**
  * Issue a signed credential AND return the agent's secret key.
  * Used when the caller needs to enable further delegation from this agent.
- * The secret key must be stored in-memory only — never persisted.
+ * Hand the secret key to an AgentKeyStore; never persist it unencrypted.
  */
 export function issueCredentialWithKey(
   request: CredentialIssueRequest,
-  issuerSecretKey: Uint8Array
+  issuerSecretKey: SigningKey
 ): { credential: AgentCredential; agentSecretKey: Uint8Array } {
   if (!_ml_dsa65) {
     throw new Error("Agent identity not initialized — call initAgentIdentity() first");
@@ -382,7 +396,7 @@ export function issueCredentialWithKey(
     .digest("hex");
 
   const payloadBytes = new Uint8Array(Buffer.from(canonicalPayload));
-  const signatureBytes = _ml_dsa65.sign(issuerSecretKey, payloadBytes);
+  const signatureBytes = signWith(issuerSecretKey, payloadBytes);
   const issuerSignature = Buffer.from(signatureBytes).toString("base64");
 
   return {
@@ -541,8 +555,8 @@ export function validateDelegation(
  */
 export function delegateCredential(
   request: DelegationRequest,
-  parentSecretKey: Uint8Array,
-  issuerSecretKey: Uint8Array,
+  parentSecretKey: SigningKey,
+  issuerSecretKey: SigningKey,
   registry: { get(id: string): AgentCredential | undefined }
 ): DelegatedCredential {
   if (!_ml_dsa65) {
@@ -610,7 +624,7 @@ export function delegateCredential(
     childCredentialHash: credentialHash,
   });
   const chainMessageBytes = new Uint8Array(Buffer.from(authorityPayload));
-  const chainSigBytes = _ml_dsa65.sign(parentSecretKey, chainMessageBytes);
+  const chainSigBytes = signWith(parentSecretKey, chainMessageBytes);
   const chainSignature = Buffer.from(chainSigBytes).toString("base64");
 
   // Assemble the full delegated credential
@@ -627,7 +641,7 @@ export function delegateCredential(
   const canonicalPayload = buildCanonicalPayload(partial);
   const fullCredentialHash = createHash("sha3-256").update(canonicalPayload).digest("hex");
   const payloadBytes = new Uint8Array(Buffer.from(canonicalPayload));
-  const signatureBytes = _ml_dsa65.sign(issuerSecretKey, payloadBytes);
+  const signatureBytes = signWith(issuerSecretKey, payloadBytes);
   const issuerSignature = Buffer.from(signatureBytes).toString("base64");
 
   return {
@@ -639,12 +653,12 @@ export function delegateCredential(
 
 /**
  * Issue a delegated child credential AND return the child's secret key.
- * The secret key must be stored in-memory only — never persisted.
+ * Hand the secret key to an AgentKeyStore; never persist it unencrypted.
  */
 export function delegateCredentialWithKey(
   request: DelegationRequest,
-  parentSecretKey: Uint8Array,
-  issuerSecretKey: Uint8Array,
+  parentSecretKey: SigningKey,
+  issuerSecretKey: SigningKey,
   registry: { get(id: string): AgentCredential | undefined }
 ): { credential: DelegatedCredential; childSecretKey: Uint8Array } {
   if (!_ml_dsa65) {
@@ -702,7 +716,7 @@ export function delegateCredentialWithKey(
     childCredentialHash: baseCredentialHash,
   });
   const chainMessageBytes = new Uint8Array(Buffer.from(authorityPayload));
-  const chainSigBytes = _ml_dsa65.sign(parentSecretKey, chainMessageBytes);
+  const chainSigBytes = signWith(parentSecretKey, chainMessageBytes);
   const chainSignature = Buffer.from(chainSigBytes).toString("base64");
 
   const partial: Omit<AgentCredential, "issuerSignature" | "credentialHash"> & {
@@ -717,7 +731,7 @@ export function delegateCredentialWithKey(
   const canonicalPayload = buildCanonicalPayload(partial);
   const credentialHash = createHash("sha3-256").update(canonicalPayload).digest("hex");
   const payloadBytes = new Uint8Array(Buffer.from(canonicalPayload));
-  const signatureBytes = _ml_dsa65.sign(issuerSecretKey, payloadBytes);
+  const signatureBytes = signWith(issuerSecretKey, payloadBytes);
   const issuerSignature = Buffer.from(signatureBytes).toString("base64");
 
   return {

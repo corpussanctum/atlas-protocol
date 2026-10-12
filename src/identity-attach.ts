@@ -16,8 +16,8 @@
  *   - Single-use: the server claims the file by atomic rename (one server
  *     wins) and records the nonce, so a copy cannot be replayed.
  *   - Short TTL (default 10 min, max 60) checked from the signed fields.
- *   - The agent's secret key is not restored: delegation from an attached
- *     credential needs restart-durable keys (#4).
+ *   - The agent's key is not part of the token. Delegation from an attached
+ *     credential works only if the key is in a durable keystore (#4).
  */
 
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
