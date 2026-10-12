@@ -26,6 +26,12 @@ All notable changes to Atlas Protocol are documented in this file.
   fork instead of a generic "chain broken". Forks still fail verification
   (SPEC §6.2.1). Duplicate entry ids are now reported as replays.
   SPEC §6.2.1 now requires serialized appends instead of a single writer process.
+- **Identity registry lockout** (#32). Once every credential holding
+  `identity:register` expired (the bootstrap credential defaults to 24 h),
+  registration failed for good. New `atlas-operator registry-reset --reason`
+  (operator passphrase on a TTY) logs a `REGISTRY_RESET` entry with the
+  registry's SHA3-256 and an ML-DSA-65 operator signature, then archives the
+  registry so bootstrap re-opens. `REGISTRY_RESET` is a new audit event type.
 - `atlas_proximity_disconnect` reported "Session … closed." for IDs that
   were never active; it now returns `isError` with "not found" (#26).
 - Docs claimed 97 policy rules (90 deny) and "120+" fixtures. The default set

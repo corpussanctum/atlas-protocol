@@ -255,6 +255,16 @@ atlas-operator revoke
 
 Keep the encrypted operator key off-host if you can (`--key-file` on removable media). See the limitations section for what a same-user agent can still do.
 
+### Registry reset
+
+Once every credential holding `identity:register` has expired or been revoked, nothing can register again. To recover, or to undo a bad first registration, the operator resets the registry:
+
+```
+atlas-operator registry-reset --reason "bootstrap credential expired"
+```
+
+This writes a `REGISTRY_RESET` audit entry carrying the registry's SHA3-256 and an operator signature, then archives the registry to `identity-registry.reset-<timestamp>.json`. Restart every running Atlas server afterwards, since each one holds the old registry in memory. The next `atlas_identity_register` is a bootstrap and needs two-channel confirmation again.
+
 ## Quiet mode
 
 For mature agents (200+ sessions) performing low-risk actions, quiet mode auto-approves requests without Telegram involvement — reducing noise while maintaining full audit trail coverage.

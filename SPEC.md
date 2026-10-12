@@ -251,7 +251,7 @@ For **Development** conformance, two-channel confirmation MAY be skipped (via `A
 
 **Recovery from failed bootstrap:**
 
-If the registry must be reset after an accidental or compromised first registration, an operator with physical host access MAY delete the identity registry file at `<data_dir>/identity-registry.json`. A `REGISTRY_RESET` event MUST be written to the audit log before deletion. After deletion, the bootstrap window re-opens and two-channel confirmation MUST be repeated (for Production/Research conformance).
+If the registry must be reset, an operator with physical host access MAY remove the identity registry file at `<data_dir>/identity-registry.json`. Reasons include an accidental or compromised first registration, or no unexpired, unrevoked credential holding `identity:register` remaining, which otherwise locks registration out permanently. A `REGISTRY_RESET` event MUST be written to the audit log before removal. It MUST record the SHA3-256 of the registry file and SHOULD carry an operator signature (§9) over its fields. Implementations SHOULD archive the file (mode 0600) rather than delete it. Running gatekeepers MUST be restarted before re-registration, since they hold the registry in memory. After removal, the bootstrap window re-opens and two-channel confirmation MUST be repeated (for Production/Research conformance). The reference implementation provides this as `atlas-operator registry-reset --reason TEXT`.
 
 ## 5. Credential delegation
 

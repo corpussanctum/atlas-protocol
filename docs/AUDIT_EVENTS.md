@@ -35,6 +35,7 @@ CI enforces that this file matches the code in both directions (`npm run check:v
 |---|---|
 | `CREDENTIAL_EXPIRED` | A request presented an expired agent credential |
 | `CREDENTIAL_EXPIRY_WARNING` | An active credential is close to expiry |
+| `REGISTRY_RESET` | The operator ran `atlas-operator registry-reset`; written before the registry is archived. `meta` holds the registry's SHA3-256, credential counts, `archived_as`, and an ML-DSA-65 `operator_signature` over `action`, `reason`, `registry_sha3`, `archived_as`, `credentials_total`, `credentials_active`, `operator_key_id`, `timestamp` (SPEC §4.6) |
 
 ### Proximity Mesh (research/demo)
 
