@@ -8,7 +8,13 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { createHardwareAdapters } from "../src/proximity/adapters/index.js";
+import {
+  createHardwareAdapters,
+  ADAPTER_TYPES,
+  AndroidUWBDriver,
+  IOSUWBDriver,
+} from "../src/proximity/adapters/index.js";
+import { MockUWBDriver } from "../src/proximity/hardware.js";
 import type { AdapterType } from "../src/proximity/adapters/index.js";
 
 describe("Hardware Adapter Factory", () => {
@@ -97,8 +103,40 @@ describe("Hardware Adapter Factory", () => {
 
   it("all adapter types are valid", () => {
     const validTypes: AdapterType[] = ["mock", "raspberry-pi", "esp32-uart", "android", "ios"];
-    for (const type of validTypes) {
-      assert.equal(typeof type, "string");
-    }
+    assert.deepEqual([...ADAPTER_TYPES].sort(), [...validTypes].sort());
+  });
+
+  it("ATLAS_HARDWARE_ADAPTER selects the instantiated drivers", async () => {
+    process.env.ATLAS_HARDWARE_ADAPTER = "android";
+    const adapters = await createHardwareAdapters();
+    assert.equal(adapters.type, "android");
+    assert.equal(adapters.source, "env");
+    assert.ok(adapters.uwb instanceof AndroidUWBDriver);
+    assert.ok(!(adapters.uwb instanceof MockUWBDriver));
+  });
+
+  it("ATLAS_HARDWARE_ADAPTER is case- and whitespace-insensitive", async () => {
+    process.env.ATLAS_HARDWARE_ADAPTER = "  iOS ";
+    const adapters = await createHardwareAdapters();
+    assert.equal(adapters.type, "ios");
+    assert.ok(adapters.uwb instanceof IOSUWBDriver);
+  });
+
+  it("unknown ATLAS_HARDWARE_ADAPTER throws instead of falling back to mock", async () => {
+    process.env.ATLAS_HARDWARE_ADAPTER = "raspbery-pi";
+    await assert.rejects(createHardwareAdapters(), /Unknown ATLAS_HARDWARE_ADAPTER "raspbery-pi"/);
+  });
+
+  it("override reports its source", async () => {
+    const adapters = await createHardwareAdapters("mock");
+    assert.equal(adapters.source, "override");
+  });
+
+  it("unset env without detectable hardware defaults to mock", async () => {
+    delete process.env.ATLAS_HARDWARE_ADAPTER;
+    const adapters = await createHardwareAdapters();
+    // CI and dev hosts are not Raspberry Pis with UWB attached
+    assert.equal(adapters.type, "mock");
+    assert.equal(adapters.source, "default");
   });
 });

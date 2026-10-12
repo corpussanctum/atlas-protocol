@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Atlas Protocol — Claude Code Channels Plugin (v0.5.0)
+ * Atlas Protocol — Claude Code Channels Plugin
  *
  * Telegram approval channel for Claude Code with:
  *   - agent identity attestation (ML-DSA-65 signed credentials)
@@ -46,8 +46,8 @@ import { runPolicyTests } from "./policy-test-runner.js";
 import { BreakGlassManager } from "./break-glass.js";
 import { AuditRotationManager } from "./audit-rotation.js";
 import { checkQuietEligibility, loadQuietConfig } from "./quiet-mode.js";
-import { ProximityMesh, loadProximityConfig, MockUWBDriver, MockBLEDriver, MockNFCDriver, generateEphemeralKeypair } from "./proximity/index.js";
-import type { ProximityMeshConfig } from "./proximity/index.js";
+import { ProximityMesh, loadProximityConfig, createHardwareAdapters, generateEphemeralKeypair } from "./proximity/index.js";
+import type { ProximityMeshConfig, HardwareAdapterSet } from "./proximity/index.js";
 import { PROTOCOL_VERSION } from "./protocol-version.js";
 
 const VERSION = "1.0.2";
@@ -128,11 +128,41 @@ async function main(): Promise<void> {
 
   // Proximity Mesh (SPEC § 13)
   const proximityConfig = loadProximityConfig();
-  const uwbDriver = new MockUWBDriver();
-  const bleDriver = new MockBLEDriver();
-  const nfcDriver = new MockNFCDriver();
+  // Hardware adapters are selected via ATLAS_HARDWARE_ADAPTER (or auto-detect)
+  // on first proximity tool call. A failed selection is surfaced, never
+  // silently replaced with mock drivers.
+  let hardwarePromise: Promise<HardwareAdapterSet> | undefined;
+  let hardwareError: string | undefined;
+  const getHardware = (): Promise<HardwareAdapterSet> => {
+    hardwarePromise ??= createHardwareAdapters().then(
+      (hw) => {
+        audit.log("PROXIMITY_HARDWARE_SELECTED", { meta: { adapter: hw.type, source: hw.source } });
+        return hw;
+      },
+      (err: unknown) => {
+        hardwareError = err instanceof Error ? err.message : String(err);
+        audit.log("PROXIMITY_HARDWARE_ERROR", { meta: { error: hardwareError } });
+        throw err;
+      },
+    );
+    return hardwarePromise;
+  };
   // ProximityMesh is initialized lazily on first proximity tool call
   let proximityMesh: ProximityMesh | undefined;
+  const ensureProximityMesh = async (agentId: string): Promise<ProximityMesh> => {
+    if (!proximityMesh) {
+      const hw = await getHardware();
+      proximityMesh = new ProximityMesh(agentId, {
+        uwb: hw.uwb, ble: hw.ble, nfc: hw.nfc,
+        signer, registry, audit, policy: policyEngine,
+      }, proximityConfig);
+    }
+    return proximityMesh;
+  };
+  const proximityHardwareError = () => ({
+    content: [{ type: "text" as const, text: `Proximity hardware unavailable: ${hardwareError}` }],
+    isError: true,
+  });
 
   // Audit log rotation
   const rotationMaxBytes = parseInt(process.env.ATLAS_AUDIT_MAX_SIZE_MB ?? "10", 10) * 1024 * 1024;
@@ -498,7 +528,7 @@ async function main(): Promise<void> {
         },
         annotations: { readOnlyHint: true, destructiveHint: false },
       },
-      // -- Proximity Mesh tools (v1.1.0, SPEC § 13) ----------------------------
+      // -- Proximity Mesh tools (SPEC § 13) ------------------------------------
       {
         name: "atlas_proximity_status",
         description:
@@ -1368,21 +1398,27 @@ async function main(): Promise<void> {
         };
       }
 
-      // -- Proximity Mesh tool handlers (v1.1.0) --------------------------------
+      // -- Proximity Mesh tool handlers (SPEC § 13) -----------------------------
 
       case "atlas_proximity_status": {
-        const hwAvail = {
-          uwb: await uwbDriver.isAvailable().catch(() => false),
-          ble: await bleDriver.isAvailable().catch(() => false),
-          nfc: await nfcDriver.isAvailable().catch(() => false),
-        };
+        const hw = await getHardware().catch(() => undefined);
+        const hardware = hw
+          ? {
+              adapter: hw.type,
+              source: hw.source,
+              simulated: hw.type === "mock",
+              uwb: await hw.uwb.isAvailable().catch(() => false),
+              ble: await hw.ble.isAvailable().catch(() => false),
+              nfc: await hw.nfc.isAvailable().catch(() => false),
+            }
+          : { adapter: null, error: hardwareError };
         const sessions = proximityMesh?.listSessions() ?? [];
         return {
           content: [{
             type: "text" as const,
             text: JSON.stringify({
               profile: "ProximityMesh",
-              hardware: hwAvail,
+              hardware,
               config: proximityConfig,
               advertising: proximityMesh?.isAdvertising() ?? false,
               activeSessions: sessions.length,
@@ -1400,16 +1436,16 @@ async function main(): Promise<void> {
 
       case "atlas_proximity_scan": {
         const scanDuration = typeof args?.duration_ms === "number" ? args.duration_ms : 5000;
-        if (!proximityMesh) {
-          if (!sessionAgentId) {
-            return { content: [{ type: "text" as const, text: "No active agent — register an identity first (atlas_identity_register)" }], isError: true };
-          }
-          proximityMesh = new ProximityMesh(sessionAgentId, {
-            uwb: uwbDriver, ble: bleDriver, nfc: nfcDriver,
-            signer, registry, audit, policy: policyEngine,
-          }, proximityConfig);
+        if (!proximityMesh && !sessionAgentId) {
+          return { content: [{ type: "text" as const, text: "No active agent — register an identity first (atlas_identity_register)" }], isError: true };
         }
-        const peers = await proximityMesh.scanForPeers(scanDuration);
+        let mesh: ProximityMesh;
+        try {
+          mesh = await ensureProximityMesh(sessionAgentId!);
+        } catch {
+          return proximityHardwareError();
+        }
+        const peers = await mesh.scanForPeers(scanDuration);
         return {
           content: [{
             type: "text" as const,
@@ -1437,11 +1473,11 @@ async function main(): Promise<void> {
         if (!cred) {
           return { content: [{ type: "text" as const, text: `Agent ${agentId} not found in registry` }], isError: true };
         }
-        if (!proximityMesh) {
-          proximityMesh = new ProximityMesh(agentId, {
-            uwb: uwbDriver, ble: bleDriver, nfc: nfcDriver,
-            signer, registry, audit, policy: policyEngine,
-          }, proximityConfig);
+        let mesh: ProximityMesh;
+        try {
+          mesh = await ensureProximityMesh(agentId);
+        } catch {
+          return proximityHardwareError();
         }
         try {
           // Build a synthetic DiscoveredPeer from the device_id
@@ -1453,7 +1489,7 @@ async function main(): Promise<void> {
             maxRangeMeters: proximityConfig.maxProximityMeters,
             discoveredAt: new Date().toISOString(),
           };
-          const session = await proximityMesh.establishSession(peer, cred);
+          const session = await mesh.establishSession(peer, cred);
           return {
             content: [{
               type: "text" as const,

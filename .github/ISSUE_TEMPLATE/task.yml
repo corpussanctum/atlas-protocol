@@ -1,0 +1,22 @@
+name: Engineering task
+description: Roadmap or hardening work (protocol, policy, identity, adapters, CI)
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is wrong or missing, with file/SPEC references.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Verifiable acceptance criteria (tests, CI checks, SPEC updates).
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: SPEC / version impact
+      description: Does this change normative behavior, the audit schema, or any version in the SPEC §11.2 map?

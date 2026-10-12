@@ -4,6 +4,40 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **`ATLAS_HARDWARE_ADAPTER` had no effect.** The MCP server constructed
+  `Mock{UWB,BLE,NFC}Driver` directly and never called the adapter factory, so
+  every ProximityMesh ran on mock drivers regardless of configuration. The
+  server now selects drivers through `createHardwareAdapters()` on the first
+  proximity tool call, and an end-to-end test spawns the server to prove the
+  env var changes the instantiated driver.
+- **Raspberry Pi auto-detection never ran.** The factory called `require()`
+  inside an ESM module; the resulting `ReferenceError` was swallowed and
+  detection always fell back to mock.
+
+### Changed
+- `atlas_proximity_status` reports `hardware.adapter`, `hardware.source`
+  (`env` / `auto-detect` / `default`), and `hardware.simulated`.
+- An unrecognized `ATLAS_HARDWARE_ADAPTER` value, or adapter drivers that fail
+  to load, now make the proximity tools return an error (and log
+  `PROXIMITY_HARDWARE_ERROR`) instead of degrading to mock drivers. Successful
+  selection logs `PROXIMITY_HARDWARE_SELECTED`.
+- ESP32 is no longer auto-selected whenever any `/dev/ttyUSB*` / `ttyACM*`
+  device exists; it requires `ATLAS_HARDWARE_ADAPTER=esp32-uart`.
+- Lockfile refreshed via `npm audit fix` (in-range only; MCP SDK 1.28.0 →
+  1.32.1). Clears 9 advisories (1 critical, 4 high) in the SDK's HTTP/OAuth
+  transitive dependencies.
+
+### Added
+- `npm run check:versions` (`scripts/check-versions.mjs`): fails when
+  implementation / spec / protocol / credential-schema versions or the README
+  tool count disagree across `package.json`, `src/`, plugin manifests,
+  lockfile, README and SPEC §11.2 version maps, and CHANGELOG.
+- CI: version-consistency job, `npm audit --omit=dev --audit-level=high` for
+  both packages, and a package-contents check. CodeQL (`security-extended`)
+  workflow and Dependabot for npm + GitHub Actions.
+- GitHub issue templates (bug, security-hardening task) and a PR template.
+
 ## [1.0.2] - 2026-08-29
 
 Honest 1.0 follow-up: version map frozen, CI added, issuer key rotation

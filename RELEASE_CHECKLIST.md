@@ -25,6 +25,7 @@ Every release of Atlas Protocol MUST answer these questions before merging to ma
 
 - [ ] `package.json` version updated.
 - [ ] `src/index.ts` VERSION constant updated (must match `package.json`).
+- [ ] `npm run check:versions` passes (enforced in CI).
 - [ ] `src/protocol-version.ts` PROTOCOL_VERSION updated (if wire-format changes).
 - [ ] README version map updated.
 - [ ] `CHANGELOG.md` entry added with date.

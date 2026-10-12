@@ -1,0 +1,33 @@
+name: Bug report
+description: Something in Atlas behaves differently from SPEC.md or the README
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Observed behavior vs. what SPEC.md / README says should happen.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Minimal steps, env vars (ATLAS_*), and tool calls.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: Output of atlas_status (implementation / protocol / spec versions) and Node version.
+  - type: dropdown
+    id: fail-open
+    attributes:
+      label: Could this cause Atlas to fail open?
+      description: If yes, do NOT file publicly — follow SECURITY.md instead.
+      options:
+        - "No"
+        - "Unsure"
+    validations:
+      required: true

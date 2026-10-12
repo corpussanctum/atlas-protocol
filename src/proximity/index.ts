@@ -77,7 +77,8 @@ export type { ProximityMeshDeps } from "./mesh.js";
 
 // Hardware adapters (production drivers)
 export { createHardwareAdapters } from "./adapters/index.js";
-export type { AdapterType, HardwareAdapterSet } from "./adapters/index.js";
+export { ADAPTER_TYPES } from "./adapters/index.js";
+export type { AdapterType, AdapterSource, HardwareAdapterSet } from "./adapters/index.js";
 
 // ---------------------------------------------------------------------------
 // Convenience: load proximity config from environment

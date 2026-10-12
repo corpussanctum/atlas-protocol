@@ -546,6 +546,8 @@ This launches a complete 3-agent music swarm (orchestrator + renderer + mixer) w
 Press `Ctrl+C` to shut down cleanly.
 
 > **Want real hardware?** Set `ATLAS_HARDWARE_ADAPTER=raspberry-pi` (or `esp32-uart`). Those adapters are untested reference drivers — do not assume production readiness without physical validation. The ESP32 companion firmware is not implemented.
+>
+> Hardware is selected on the first proximity tool call. `atlas_proximity_status` reports the active `adapter`, how it was chosen (`env`, `auto-detect`, or `default`), and `simulated: true` when mock drivers are in use. Without the env var, only a Raspberry Pi with UWB on UART/SPI is auto-detected; ESP32 must be selected explicitly. An unrecognized `ATLAS_HARDWARE_ADAPTER` value, or an adapter whose drivers fail to load, makes the proximity tools return an error — Atlas never silently substitutes mock drivers.
 
 ## Usage Examples
 
