@@ -106,6 +106,29 @@ const emittedDetails = new Set(
 );
 compareSets("docs/AUDIT_EVENTS.md event_detail", emittedDetails, rowNames(detailPart));
 
+// Policy rule and fixture counts: derived from code, checked against prose
+const defaultsSrc = read("src/config.ts").match(/function buildDefaults\(\)[\s\S]*?\n}\n/);
+if (!defaultsSrc) throw new Error("src/config.ts: could not find buildDefaults()");
+const ruleCount = (defaultsSrc[0].match(/tool_pattern:/g) ?? []).length;
+const denyCount = (defaultsSrc[0].match(/action:\s*"deny"/g) ?? []).length;
+const askCount = (defaultsSrc[0].match(/action:\s*"ask"/g) ?? []).length;
+const fixtureCount = (read("src/policy-test-runner.ts").match(/^\s*\{ label:/gm) ?? []).length;
+const countClaims = [
+  [/(\d+)-rule\b|(\d+) (?:ordered |default )rules\b|validate all (\d+) rules|ships with (\d+) rules/g, ruleCount, "total rules"],
+  [/(\d+) (?:hard-)?deny\b|Hard deny \((\d+) rules/g, denyCount, "deny rules"],
+  [/(\d+) ask\b|Ask \((\d+) rules/g, askCount, "ask rules"],
+  [/(\d+) (?:regression |known malicious\/benign )fixtures/g, fixtureCount, "runtime fixtures"],
+];
+for (const doc of ["README.md", "SPEC.md", "CONTRIBUTING.md", ".claude-plugin/marketplace.json", ".claude-plugin/plugin.json"]) {
+  const text = read(doc);
+  for (const [re, expected, label] of countClaims) {
+    for (const m of text.matchAll(re)) {
+      const n = Number(m.slice(1).find((g) => g !== undefined));
+      if (n !== expected) setChecks.push(`${doc}: "${m[0]}" claims ${n} ${label}, code has ${expected}`);
+    }
+  }
+}
+
 let failed = 0;
 for (const problem of setChecks) {
   console.error(`MISMATCH ${problem}`);
@@ -124,5 +147,6 @@ if (failed) {
 }
 console.log(
   `OK: implementation ${impl}, spec ${spec}, protocol ${protocol}, credential ${credential}, ${toolCount} tools, ` +
+    `${ruleCount} rules (${denyCount} deny/${askCount} ask), ${fixtureCount} fixtures, ` +
     `${eventTypes.size} audit events + ${emittedDetails.size} event_detail values documented — ${checks.length} version checks consistent`,
 );

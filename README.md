@@ -44,7 +44,7 @@ These four identifiers are independent. Do not treat them as interchangeable.
 When an agent requests permission to use a tool:
 
 1. **Identity attestation** — is the agent registered? Is its credential valid, unexpired, unrevoked? Does it have the required capability?
-2. **Policy engine** — 97 ordered rules evaluated against the request. 90 hard-deny rules block dangerous patterns immediately. 7 ask rules forward to the operator.
+2. **Policy engine** — 96 ordered rules evaluated against the request. 89 hard-deny rules block dangerous patterns immediately. 7 ask rules forward to the operator.
 3. **Quiet mode** — if the agent is mature (200+ sessions), the request is low-risk (read-only, no anomaly flags, no sensitive paths), and quiet mode is enabled, auto-approve without Telegram.
 4. **Break-glass** — if a break-glass token is active (Telegram outage), auto-approve "ask" verdicts. Hard-deny rules are never bypassed.
 5. **Telegram relay** — unresolved requests go to the operator. `yes <id>` or `no <id>`. No reply = denied.
@@ -180,9 +180,9 @@ Once the first credential is registered, identity enforcement activates. Set `AT
 
 ## Policy engine
 
-The default ruleset contains **97 ordered rules** (90 deny + 7 ask) evaluated on every request. First match wins. If no rule matches, Atlas defaults to **ASK**, not ALLOW — the request is forwarded to the operator for a human decision.
+The default ruleset contains **96 ordered rules** (89 deny + 7 ask) evaluated on every request. First match wins. If no rule matches, Atlas defaults to **ASK**, not ALLOW — the request is forwarded to the operator for a human decision.
 
-### Hard deny (90 rules, no human override)
+### Hard deny (89 rules, no human override)
 
 | Category | Examples |
 |---|---|
@@ -216,7 +216,7 @@ Every request is scanned for velocity spikes, PII patterns (SSN, email, phone), 
 
 ### Policy regression testing
 
-Run `atlas_test_policy` via MCP to validate all 97 rules against 120+ known malicious/benign fixtures. This should be run after any policy rule changes to catch regressions.
+Run `atlas_test_policy` via MCP to validate all 96 rules against 79 known malicious/benign fixtures. This should be run after any policy rule changes to catch regressions.
 
 ```bash
 # From tests:
@@ -370,7 +370,7 @@ Atlas exposes 26 MCP tools to the Claude Code session:
 
 | Tool | Description |
 |---|---|
-| `atlas_test_policy` | Run 120+ regression fixtures against current policy rules |
+| `atlas_test_policy` | Run 79 regression fixtures against current policy rules |
 
 ### Break-glass
 
@@ -494,8 +494,8 @@ src/
 │   ├── helpers.ts         # Confirmation-code files, credential time remaining
 │   └── tools/             # 26 tools by domain: core, identity, baseline, policy,
 │                          #   break-glass, audit, why, proximity
-├── config.ts              # Configuration loader + 97 default rules
-├── policy-engine.ts       # 97 rules, anomaly detection, velocity tracking
+├── config.ts              # Configuration loader + default policy rules
+├── policy-engine.ts       # Rule evaluation, anomaly detection, velocity tracking
 ├── policy-test-runner.ts  # Runtime regression test fixtures + runner
 ├── audit-log.ts           # SHA3-256 chain + ML-DSA-65 + HMAC + identity fields
 ├── audit-rotation.ts      # Size-based log rotation with integrity manifest
@@ -559,7 +559,7 @@ This launches a complete 3-agent music swarm (orchestrator + renderer + mixer) w
 
 - Simulated UWB ranging + proximity proofs
 - Full ML-DSA-65 credential exchange over DIDComm
-- Local 97-rule policy evaluation
+- Local 96-rule policy evaluation
 - Distance-aware task delegation (e.g., "apply reverb based on 2.4 m distance")
 - Live quantum audit trail streaming to console
 

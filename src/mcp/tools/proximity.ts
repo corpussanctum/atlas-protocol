@@ -196,7 +196,9 @@ export function handlers(ctx: ToolContext): Record<string, ToolHandler> {
       if (!ctx.proximityMesh) {
         return { content: [{ type: "text" as const, text: "No proximity mesh active" }], isError: true };
       }
-      await ctx.proximityMesh.closeSession(sessId);
+      if (!(await ctx.proximityMesh.closeSession(sessId))) {
+        return { content: [{ type: "text" as const, text: `Session ${sessId} not found` }], isError: true };
+      }
       return {
         content: [{ type: "text" as const, text: `Session ${sessId} closed.` }],
       };
