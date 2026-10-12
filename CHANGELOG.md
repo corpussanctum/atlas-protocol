@@ -4,6 +4,16 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **MCP TypeScript SDK v2** (#6): the server now uses `@modelcontextprotocol/server`
+  2.3 (2026-07-28 spec line) with zod 4, replacing `@modelcontextprotocol/sdk` v1.
+  Handlers register by method name; the Claude Code channel permission relay
+  uses the v2 custom-notification form. Protocol negotiation keeps the SDK
+  default (`2025-11-25`, same as v1.32), so nothing changes on the wire for
+  current clients. Opting into 2026-07-28 features waits on client support.
+  The v1 SDK stays as a dev dependency so server-level tests keep exercising
+  a v1-era client (as Claude Code uses); a new test covers the v2 client.
+
 ### Fixed
 - `atlas_proximity_disconnect` reported "Session … closed." for IDs that
   were never active; it now returns `isError` with "not found" (#26).

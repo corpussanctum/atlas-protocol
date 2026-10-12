@@ -11,7 +11,7 @@ import { VERSION, SPEC_VERSION } from "../../version.js";
 import { escapeHtml } from "../../html.js";
 import { writeConfirmCodeFile, clearConfirmCodeFile } from "../helpers.js";
 import { credentialTimeRemaining } from "../helpers.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolHandler } from "../context.js";
 
 const VALID_ROLES: AgentRole[] = ["claude-code", "orchestrator", "tool-caller", "observer", "admin"];

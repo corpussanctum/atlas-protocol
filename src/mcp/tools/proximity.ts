@@ -3,7 +3,7 @@
  */
 
 import { ProximityMesh, loadProximityConfig, createHardwareAdapters, generateEphemeralKeypair } from "../../proximity/index.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolHandler } from "../context.js";
 
 export const definitions: Tool[] = [

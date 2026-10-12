@@ -3,7 +3,7 @@
  */
 
 import { ingestEntry as baselineIngestEntry, ingestAssessment as baselineIngestAssessment, detectDrift, getBaselineContext } from "../../baseline-engine.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolHandler } from "../context.js";
 
 export const definitions: Tool[] = [

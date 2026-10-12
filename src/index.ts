@@ -12,9 +12,8 @@
  *   - anomaly flagging for higher-risk tool requests
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
@@ -47,14 +46,13 @@ import { escapeHtml } from "./html.js";
 import { createPermissionPipeline } from "./authority/permission-pipeline.js";
 
 
-const PermissionRequestSchema = z.object({
-  method: z.literal("notifications/claude/channel/permission_request"),
-  params: z.object({
-    request_id: z.string(),
-    tool_name: z.string(),
-    description: z.string(),
-    input_preview: z.string(),
-  }),
+/** Claude Code channel permission relay (non-spec notification). */
+const PERMISSION_REQUEST_METHOD = "notifications/claude/channel/permission_request";
+const PermissionRequestParams = z.object({
+  request_id: z.string(),
+  tool_name: z.string(),
+  description: z.string(),
+  input_preview: z.string(),
 });
 
 async function main(): Promise<void> {
@@ -246,7 +244,7 @@ async function main(): Promise<void> {
   // MCP Tool definitions
   // =========================================================================
 
-  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+  mcp.setRequestHandler("tools/list", async () => ({
     tools: toolDefinitions,
   }));
 
@@ -280,7 +278,7 @@ async function main(): Promise<void> {
   };
   const toolHandlers = createToolHandlers(toolContext);
 
-  mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
+  mcp.setRequestHandler("tools/call", async (request) => {
     const { name, arguments: args } = request.params;
     const handler = Object.hasOwn(toolHandlers, name) ? toolHandlers[name] : undefined;
     if (!handler) {
@@ -375,7 +373,7 @@ async function main(): Promise<void> {
     config,
   });
 
-  mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
+  mcp.setNotificationHandler(PERMISSION_REQUEST_METHOD, { params: PermissionRequestParams }, async (params) => {
     const req: PermissionRequest = {
       request_id: params.request_id,
       tool_name: params.tool_name,
