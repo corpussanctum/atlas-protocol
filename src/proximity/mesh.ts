@@ -348,9 +348,8 @@ export class ProximityMesh {
     const ephemeral = generateEphemeralKeypair();
 
     const localPublicKey = this.deps.signer.getPublicKeyRaw();
-    const localSecretKey = this.deps.signer.getSecretKeyRaw();
 
-    if (!localPublicKey || !localSecretKey) {
+    if (!localPublicKey) {
       throw new ProximityError(
         "Local agent keys unavailable — QuantumSigner not initialized",
         "KEYS_UNAVAILABLE",
@@ -364,7 +363,6 @@ export class ProximityMesh {
       peer.agentIdHash,
       {
         localStaticPublicKey: localPublicKey,
-        localStaticSecretKey: localSecretKey,
         localEphemeralPublicKey: ephemeral.publicKey,
         localEphemeralSecretKey: ephemeral.secretKey,
         remoteEphemeralPublicKey: peer.ephemeralPublicKey,

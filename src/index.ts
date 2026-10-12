@@ -23,7 +23,7 @@ import { AuditLogger } from "./audit-log.js";
 import type { AuditEntry } from "./audit-log.js";
 import { TelegramBot } from "./telegram.js";
 import { createIdentityProvider } from "./identity-provider.js";
-import { QuantumSigner } from "./quantum-signer.js";
+import { IssuerKeyError, QuantumSigner } from "./quantum-signer.js";
 import { IdentityRegistry } from "./identity-registry.js";
 import { assessWindow, describeWhyEndpoint, loadWhyConfig } from "./why-engine.js";
 import type { AuditEventWindow } from "./why-engine.js";
@@ -74,8 +74,20 @@ async function main(): Promise<void> {
   const identityContext = identityProvider.getContext();
   const policyEngine = new PolicyEngine(config, identityContext);
 
-  // Initialize ML-DSA-65 quantum signer
-  const signer = await QuantumSigner.create(config.data_dir);
+  // Initialize ML-DSA-65 quantum signer. The issuer key is wrapped at rest
+  // when a keystore passphrase is set (#45); if it can't be loaded, stop
+  // rather than generate a new key that would invalidate every credential.
+  let signer: QuantumSigner;
+  try {
+    signer = await QuantumSigner.create(config.data_dir, {
+      passphrase: process.env.ATLAS_KEYSTORE_PASSPHRASE || undefined,
+    });
+  } catch (err) {
+    if (!(err instanceof IssuerKeyError)) throw err;
+    console.error(`[atlas] ${err.message}`);
+    console.error("[atlas] Refusing to start without the issuer key.");
+    process.exit(1);
+  }
 
   // Agent key custody (#4): durable only with ATLAS_KEYSTORE_PASSPHRASE
   const agentKeys = await AgentKeyStore.open(config.data_dir, process.env.ATLAS_KEYSTORE_PASSPHRASE || undefined);

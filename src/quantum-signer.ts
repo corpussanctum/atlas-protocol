@@ -7,8 +7,14 @@
  *
  * Key management:
  *   - Keypair auto-generated on first run and stored in the data directory
+ *   - With a keystore passphrase (ATLAS_KEYSTORE_PASSPHRASE) the secret key
+ *     is stored wrapped in quantum-keypair.enc.json (scrypt → AES-256-GCM, as
+ *     for agent keys), and a plaintext quantum-keypair.json is migrated on
+ *     start (#45). A missing or wrong passphrase for a wrapped key, or an
+ *     unreadable key file, throws IssuerKeyError: the key is never silently
+ *     regenerated, since a new key invalidates every credential.
  *   - Public key hash logged at session start for key pinning
- *   - Private key never leaves the data directory
+ *   - The secret key is held in a private field and never exported
  *   - Rotation (SPEC §4.5): generate new key, log KEY_ROTATION signed by the
  *     old key, archive old public keys (last 3) for historical verification
  *
@@ -22,10 +28,10 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, renameSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { keyIdFor } from "./operator-key.js";
-import type { SignerProvider } from "./signer-provider.js";
+import { deriveKey, keyIdFor, SCRYPT_PARAMS } from "./operator-key.js";
+import { unwrapSecret, wrapSecret, type SignerProvider, type WrappedSecret } from "./signer-provider.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,13 +46,51 @@ export interface QuantumKeypair {
   created_at: string;
 }
 
+/** quantum-keypair.enc.json: the issuer key wrapped under the keystore passphrase (#45). */
+export interface WrappedIssuerKeypair {
+  version: 1;
+  algorithm: "ML-DSA-65";
+  nist_standard: string;
+  public_key_b64: string;
+  public_key_hash: string;
+  created_at: string;
+  kdf: { name: "scrypt"; N: number; r: number; p: number; salt: string };
+  cipher: { name: "aes-256-gcm" } & WrappedSecret;
+}
+
+export type IssuerKeyStorage = "wrapped" | "plaintext";
+
 export interface QuantumSignerStatus {
   available: boolean;
   algorithm: string | null;
   public_key_hash: string | null;
   public_key_hash_sha3: string | null;
   key_path: string | null;
+  /** How the issuer secret key is stored at rest (#45) */
+  key_storage: IssuerKeyStorage | null;
   archived_key_count: number;
+}
+
+export interface QuantumSignerOptions {
+  /** Keystore passphrase (ATLAS_KEYSTORE_PASSPHRASE). Set: store the key wrapped. */
+  passphrase?: string;
+}
+
+/** The issuer key can't be loaded. Startup must stop rather than generate a new key. */
+export class IssuerKeyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IssuerKeyError";
+  }
+}
+
+export const ISSUER_KEY_FILE = "quantum-keypair.json";
+export const ISSUER_KEY_WRAPPED_FILE = "quantum-keypair.enc.json";
+const ISSUER_LABEL = "atlas-issuer";
+
+/** True when the data dir holds a wrapped issuer key, which needs the passphrase to load. */
+export function issuerKeyIsWrapped(dataDir: string): boolean {
+  return existsSync(join(dataDir, ISSUER_KEY_WRAPPED_FILE));
 }
 
 /** Archived issuer public key retained for historical audit verification. */
@@ -86,6 +130,20 @@ function sha3Hex(data: Uint8Array): string {
   return createHash("sha3-256").update(data).digest("hex");
 }
 
+/** Write via a temp file and rename, so a crash never leaves a half-written key. */
+function writeAtomic(path: string, contents: string): void {
+  const dir = dirname(path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, contents, { mode: 0o600 });
+  try {
+    chmodSync(tmp, 0o600);
+  } catch {
+    // Non-fatal on restricted filesystems
+  }
+  renameSync(tmp, path);
+}
+
 function writeRestricted(path: string, contents: string): void {
   const dir = dirname(path);
   if (!existsSync(dir)) {
@@ -116,11 +174,14 @@ interface MlDsa65 {
 export class QuantumSigner {
   private ml_dsa65: MlDsa65 | null = null;
   private publicKey: Uint8Array | null = null;
-  private secretKey: Uint8Array | null = null;
+  #secretKey: Uint8Array | null = null;
+  /** Key-encryption key and its scrypt salt, when the key is stored wrapped */
+  #kek: { key: Buffer; salt: Buffer } | null = null;
   private publicKeyHash: string | null = null;
   private publicKeyHashSha3: string | null = null;
   private keyCreatedAt: string | null = null;
   private keyPath: string | null = null;
+  private wrappedPath: string | null = null;
   private archivePath: string | null = null;
   private archivedPublicKeys: ArchivedPublicKey[] = [];
   private _available = false;
@@ -132,14 +193,15 @@ export class QuantumSigner {
   /**
    * Factory: initialize the signer by loading the crypto library and
    * generating or loading a keypair from the data directory.
+   * Throws IssuerKeyError when an existing key can't be loaded.
    */
-  static async create(dataDir: string): Promise<QuantumSigner> {
+  static async create(dataDir: string, options: QuantumSignerOptions = {}): Promise<QuantumSigner> {
     const signer = new QuantumSigner();
-    await signer.initialize(dataDir);
+    await signer.initialize(dataDir, options.passphrase || undefined);
     return signer;
   }
 
-  private async initialize(dataDir: string): Promise<void> {
+  private async initialize(dataDir: string, passphrase: string | undefined): Promise<void> {
     // Try to load @noble/post-quantum
     try {
       const mod = await import("@noble/post-quantum/ml-dsa");
@@ -154,60 +216,181 @@ export class QuantumSigner {
     }
 
     // Load or generate keypair
-    this.keyPath = join(dataDir, "quantum-keypair.json");
+    this.keyPath = join(dataDir, ISSUER_KEY_FILE);
+    this.wrappedPath = join(dataDir, ISSUER_KEY_WRAPPED_FILE);
     this.archivePath = join(dataDir, "quantum-key-archive.json");
-    this.loadOrGenerateKeypair();
+    this.loadOrGenerateKeypair(passphrase);
     this.loadArchive();
     this._available = true;
   }
 
-  private loadOrGenerateKeypair(): void {
-    if (!this.ml_dsa65 || !this.keyPath) return;
+  private loadOrGenerateKeypair(passphrase: string | undefined): void {
+    if (!this.ml_dsa65 || !this.keyPath || !this.wrappedPath) return;
+    const hasWrapped = existsSync(this.wrappedPath);
+    const hasPlain = existsSync(this.keyPath);
 
-    if (existsSync(this.keyPath)) {
-      try {
-        const raw: QuantumKeypair = JSON.parse(readFileSync(this.keyPath, "utf-8"));
-        this.publicKey = Buffer.from(raw.public_key_b64, "base64");
-        this.secretKey = Buffer.from(raw.secret_key_b64, "base64");
-        this.publicKeyHash = raw.public_key_hash || sha256Hex(this.publicKey);
-        this.publicKeyHashSha3 = sha3Hex(this.publicKey);
-        this.keyCreatedAt = raw.created_at ?? null;
-        return;
-      } catch {
-        console.error("[atlas] WARNING: corrupt quantum keypair file, regenerating");
+    if (hasWrapped) {
+      if (!passphrase) {
+        throw new IssuerKeyError(
+          `The issuer key ${this.wrappedPath} is encrypted; set ATLAS_KEYSTORE_PASSPHRASE to the keystore passphrase`,
+        );
       }
+      this.loadWrapped(passphrase);
+      if (hasPlain) {
+        // An interrupted migration left both copies; drop the plaintext only if they agree.
+        const plain = this.readPlaintext();
+        if (Buffer.compare(Buffer.from(plain.public_key_b64, "base64"), Buffer.from(this.publicKey!)) !== 0) {
+          throw new IssuerKeyError(
+            `${this.keyPath} and ${this.wrappedPath} hold different issuer keys; remove the one that is not current`,
+          );
+        }
+        unlinkSync(this.keyPath);
+      }
+      return;
     }
 
-    // Generate new keypair
+    if (hasPlain) {
+      const raw = this.readPlaintext();
+      this.publicKey = Buffer.from(raw.public_key_b64, "base64");
+      this.#secretKey = Buffer.from(raw.secret_key_b64, "base64");
+      this.publicKeyHash = raw.public_key_hash || sha256Hex(this.publicKey);
+      this.publicKeyHashSha3 = sha3Hex(this.publicKey);
+      this.keyCreatedAt = raw.created_at ?? null;
+      if (passphrase) {
+        this.wrapWith(passphrase);
+        console.error(`[atlas] Issuer key migrated to ${this.wrappedPath} (encrypted); plaintext copy removed`);
+      }
+      return;
+    }
+
+    // First run: generate a new keypair
     const seed = randomBytes(32);
     const { publicKey, secretKey } = this.ml_dsa65.keygen(seed);
 
     this.publicKey = publicKey;
-    this.secretKey = secretKey;
+    this.#secretKey = secretKey;
     this.publicKeyHash = sha256Hex(publicKey);
     this.publicKeyHashSha3 = sha3Hex(publicKey);
     this.keyCreatedAt = new Date().toISOString();
 
-    this.persistCurrentKeypair();
+    if (passphrase) {
+      this.wrapWith(passphrase);
+    } else {
+      this.persistCurrentKeypair();
+    }
 
     console.error(
       `[atlas] Generated ML-DSA-65 keypair — public key hash: ${this.publicKeyHash.slice(0, 16)}...`
     );
   }
 
+  private readPlaintext(): QuantumKeypair {
+    try {
+      const raw = JSON.parse(readFileSync(this.keyPath!, "utf-8")) as QuantumKeypair;
+      if (typeof raw.public_key_b64 !== "string" || typeof raw.secret_key_b64 !== "string") {
+        throw new Error("missing key fields");
+      }
+      return raw;
+    } catch (err) {
+      throw new IssuerKeyError(
+        `The issuer key ${this.keyPath} is unreadable (${err instanceof Error ? err.message : String(err)}). ` +
+          "Restore it from backup; a new key would invalidate every credential.",
+      );
+    }
+  }
+
+  private loadWrapped(passphrase: string): void {
+    let file: WrappedIssuerKeypair;
+    try {
+      file = JSON.parse(readFileSync(this.wrappedPath!, "utf-8")) as WrappedIssuerKeypair;
+      if (file.version !== 1 || file.kdf?.name !== "scrypt" || file.cipher?.name !== "aes-256-gcm") {
+        throw new Error("unsupported format");
+      }
+    } catch (err) {
+      throw new IssuerKeyError(
+        `The issuer key ${this.wrappedPath} is unreadable (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+    const salt = Buffer.from(file.kdf.salt, "base64");
+    const kek = deriveKey(passphrase, salt, file.kdf);
+    const publicKey = Buffer.from(file.public_key_b64, "base64");
+    let secretKey: Buffer;
+    try {
+      secretKey = unwrapSecret(kek, ISSUER_LABEL, file.cipher, publicKey);
+    } catch {
+      throw new IssuerKeyError(
+        `Wrong ATLAS_KEYSTORE_PASSPHRASE for the issuer key ${this.wrappedPath} (or the file was modified)`,
+      );
+    }
+    this.publicKey = publicKey;
+    this.#secretKey = secretKey;
+    this.#kek = { key: kek, salt };
+    this.publicKeyHash = file.public_key_hash || sha256Hex(publicKey);
+    this.publicKeyHashSha3 = sha3Hex(publicKey);
+    this.keyCreatedAt = file.created_at ?? null;
+  }
+
+  /**
+   * Store the current key wrapped under a key derived from `passphrase`
+   * (fresh salt), check that it reads back, then remove any plaintext copy.
+   */
+  private wrapWith(passphrase: string): void {
+    const salt = randomBytes(16);
+    this.#kek = { key: deriveKey(passphrase, salt, SCRYPT_PARAMS), salt };
+    this.persistWrapped();
+    const check = new QuantumSigner();
+    check.ml_dsa65 = this.ml_dsa65;
+    check.wrappedPath = this.wrappedPath;
+    check.loadWrapped(passphrase);
+    const same = Buffer.compare(Buffer.from(check.#secretKey!), Buffer.from(this.#secretKey!)) === 0;
+    check.#secretKey!.fill(0);
+    if (!same) throw new IssuerKeyError(`The wrapped issuer key ${this.wrappedPath} did not read back correctly`);
+    if (this.keyPath && existsSync(this.keyPath)) unlinkSync(this.keyPath);
+  }
+
+  private persistWrapped(): void {
+    if (!this.wrappedPath || !this.#kek || !this.publicKey || !this.#secretKey || !this.publicKeyHash) return;
+    const file: WrappedIssuerKeypair = {
+      version: 1,
+      algorithm: "ML-DSA-65",
+      nist_standard: "FIPS 204",
+      public_key_b64: Buffer.from(this.publicKey).toString("base64"),
+      public_key_hash: this.publicKeyHash,
+      created_at: this.keyCreatedAt ?? new Date().toISOString(),
+      kdf: { name: "scrypt", ...SCRYPT_PARAMS, salt: this.#kek.salt.toString("base64") },
+      cipher: { name: "aes-256-gcm", ...wrapSecret(this.#kek.key, ISSUER_LABEL, this.#secretKey, this.publicKey) },
+    };
+    writeAtomic(this.wrappedPath, JSON.stringify(file, null, 2));
+  }
+
   private persistCurrentKeypair(): void {
-    if (!this.keyPath || !this.publicKey || !this.secretKey || !this.publicKeyHash) return;
+    if (this.#kek) {
+      this.persistWrapped();
+      return;
+    }
+    if (!this.keyPath || !this.publicKey || !this.#secretKey || !this.publicKeyHash) return;
 
     const keypair: QuantumKeypair = {
       algorithm: "ML-DSA-65",
       nist_standard: "FIPS 204",
       public_key_b64: Buffer.from(this.publicKey).toString("base64"),
-      secret_key_b64: Buffer.from(this.secretKey).toString("base64"),
+      secret_key_b64: Buffer.from(this.#secretKey).toString("base64"),
       public_key_hash: this.publicKeyHash,
       created_at: this.keyCreatedAt ?? new Date().toISOString(),
     };
 
     writeRestricted(this.keyPath, JSON.stringify(keypair, null, 2));
+  }
+
+  /**
+   * Re-wrap the issuer key under a new passphrase (operator command). Also
+   * encrypts a key still stored in plaintext. A server already running keeps
+   * the old key-encryption key, so stop it first: a rotation there would
+   * re-wrap under the old passphrase.
+   */
+  rewrap(newPassphrase: string): void {
+    if (!this._available || !this.#secretKey) throw new IssuerKeyError("No issuer key loaded");
+    this.wrapWith(newPassphrase);
   }
 
   private loadArchive(): void {
@@ -238,8 +421,8 @@ export class QuantumSigner {
    * or undefined if signing is not available.
    */
   sign(payload: Buffer): string | undefined {
-    if (!this._available || !this.ml_dsa65 || !this.secretKey) return undefined;
-    const sig = this.ml_dsa65.sign(this.secretKey, new Uint8Array(payload));
+    if (!this._available || !this.ml_dsa65 || !this.#secretKey) return undefined;
+    const sig = this.ml_dsa65.sign(this.#secretKey, new Uint8Array(payload));
     return Buffer.from(sig).toString("base64");
   }
 
@@ -293,7 +476,7 @@ export class QuantumSigner {
    * credentials with `prepared.newSecretKey`, then `commitRotation`.
    */
   beginRotation(): PreparedRotation {
-    if (!this._available || !this.ml_dsa65 || !this.publicKey || !this.secretKey) {
+    if (!this._available || !this.ml_dsa65 || !this.publicKey || !this.#secretKey) {
       throw new Error("Cannot rotate — quantum signer is not available");
     }
     if (!this.publicKeyHash || !this.publicKeyHashSha3) {
@@ -335,7 +518,7 @@ export class QuantumSigner {
     this.persistArchive();
 
     this.publicKey = prepared.newPublicKey;
-    this.secretKey = prepared.newSecretKey;
+    this.#secretKey = prepared.newSecretKey;
     this.publicKeyHash = prepared.newKeyHash;
     this.publicKeyHashSha3 = prepared.newKeyHashSha3;
     this.keyCreatedAt = prepared.effectiveAt;
@@ -355,7 +538,8 @@ export class QuantumSigner {
       algorithm: this._available ? "ML-DSA-65" : null,
       public_key_hash: this.publicKeyHash,
       public_key_hash_sha3: this.publicKeyHashSha3,
-      key_path: this.keyPath,
+      key_path: this.#kek ? this.wrappedPath : this.keyPath,
+      key_storage: this._available ? (this.#kek ? "wrapped" : "plaintext") : null,
       archived_key_count: this.archivedPublicKeys.length,
     };
   }
@@ -373,7 +557,7 @@ export class QuantumSigner {
    * Null when signing is unavailable.
    */
   asSignerProvider(): SignerProvider | null {
-    if (!this._available || !this.ml_dsa65 || !this.secretKey || !this.publicKey) return null;
+    if (!this._available || !this.ml_dsa65 || !this.#secretKey || !this.publicKey) return null;
     const self = this;
     return {
       get id() { return self.publicKey ? keyIdFor(self.publicKey) : ""; },
@@ -381,18 +565,10 @@ export class QuantumSigner {
       capabilities: { durable: true },
       publicKey: () => Uint8Array.from(self.publicKey ?? []),
       sign(message: Uint8Array): Uint8Array {
-        if (!self.ml_dsa65 || !self.secretKey) throw new Error("Issuer key unavailable");
-        return self.ml_dsa65.sign(self.secretKey, message);
+        if (!self.ml_dsa65 || !self.#secretKey) throw new Error("Issuer key unavailable");
+        return self.ml_dsa65.sign(self.#secretKey, message);
       },
     };
-  }
-
-  /**
-   * Get the raw secret key bytes (for credential signing).
-   * Handle with care — this is the gatekeeper's issuer key.
-   */
-  getSecretKeyRaw(): Uint8Array | null {
-    return this.secretKey;
   }
 
   /**

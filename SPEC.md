@@ -313,7 +313,16 @@ This prevents substitution attacks where an attacker replays a chain signature w
 
 Without durable custody, delegation from an agent registered before a restart is unavailable. A key-encryption key held in the gatekeeper's environment protects keys in backups and copies of the data directory, but not from an agent running as the same OS user (Appendix H).
 
-The reference implementation uses scrypt (N=2^16, r=8, p=1) and AES-256-GCM, stores keys under `<data_dir>/agent-keys/`, and takes the passphrase from `ATLAS_KEYSTORE_PASSPHRASE`. The issuer key goes through the same `SignerProvider` interface for credential signing; its at-rest storage is unchanged in this version.
+The reference implementation uses scrypt (N=2^16, r=8, p=1) and AES-256-GCM, stores keys under `<data_dir>/agent-keys/`, and takes the passphrase from `ATLAS_KEYSTORE_PASSPHRASE`. The issuer key goes through the same `SignerProvider` interface for credential signing.
+
+**Issuer key.** When a key-encryption key is configured, the gatekeeper's issuer key is held to the same rules: it is stored wrapped, bound to the issuer label and its public key, and rotation (§4.5) re-wraps the new key. Because a new issuer key invalidates every credential, the issuer key differs from agent keys in one way:
+
+| Requirement | Level |
+|---|---|
+| If the issuer key is stored wrapped and the key-encryption key is missing or wrong, or the key file is unreadable, the gatekeeper MUST refuse to start. It MUST NOT generate a replacement issuer key | MUST |
+| Migrating a plaintext issuer key MUST write the wrapped copy and confirm it decrypts to the same key before removing the plaintext | MUST |
+
+The reference implementation stores the wrapped issuer key in `<data_dir>/quantum-keypair.enc.json` with its own scrypt salt. It migrates `quantum-keypair.json` on the first start with `ATLAS_KEYSTORE_PASSPHRASE` set. `atlas-operator rewrap-issuer-key` moves it to a new passphrase.
 
 ### 5.3 Cascade revocation
 
@@ -779,7 +788,7 @@ The reference implementation uses `ATLAS_PRIVACY_MODE` and `ATLAS_TELEGRAM_SEND_
 | Inference runtime | Ollama (`why-engine.ts`) |
 | Plugin framework | MCP (Model Context Protocol) |
 | Credential storage | JSON files, chmod 600 |
-| Key storage | `quantum-keypair.json`, chmod 600 |
+| Key storage | `quantum-keypair.enc.json` (wrapped, with `ATLAS_KEYSTORE_PASSPHRASE`) or `quantum-keypair.json`, chmod 600 |
 | Audit storage | JSONL files with rotation |
 | Baseline storage | Per-agent JSON files |
 

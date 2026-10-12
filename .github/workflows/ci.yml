@@ -74,20 +74,22 @@ jobs:
       - name: Install
         run: sudo NODE=/usr/local/lib/atlas-node sh deploy/separate-user/install.sh agent
       - name: Configure
-        run: printf 'ATLAS_REQUIRE_ISOLATION=true\n' | sudo tee /etc/atlas-protocol/atlas.env >/dev/null
+        run: printf 'ATLAS_REQUIRE_ISOLATION=true\nATLAS_KEYSTORE_PASSPHRASE=ci-keystore-passphrase\n' | sudo tee /etc/atlas-protocol/atlas.env >/dev/null
       - name: Let the agent user read the checkout (for the smoke client)
         run: |
           sudo chmod o+x "$HOME" "$HOME/work" "$(dirname "$GITHUB_WORKSPACE")"
           chmod -R o+rX "$GITHUB_WORKSPACE"
       - name: Verify as the agent user
         run: sudo -u agent -H env PATH="$(dirname "$(command -v node)"):/usr/bin:/bin" sh deploy/separate-user/verify.sh
-      - name: State is owned by the gatekeeper user and private
+      - name: State is owned by the gatekeeper user and private; issuer key wrapped
         run: |
-          sudo stat -c '%U %a %n' /var/lib/atlas-protocol /var/lib/atlas-protocol/audit.jsonl /var/lib/atlas-protocol/quantum-keypair.json /etc/atlas-protocol/atlas.env | tee perms.txt
+          sudo stat -c '%U %a %n' /var/lib/atlas-protocol /var/lib/atlas-protocol/audit.jsonl /var/lib/atlas-protocol/quantum-keypair.enc.json /etc/atlas-protocol/atlas.env | tee perms.txt
           grep -qx 'atlas 700 /var/lib/atlas-protocol' perms.txt
           grep -qx 'atlas 600 /var/lib/atlas-protocol/audit.jsonl' perms.txt
-          grep -qx 'atlas 600 /var/lib/atlas-protocol/quantum-keypair.json' perms.txt
+          grep -qx 'atlas 600 /var/lib/atlas-protocol/quantum-keypair.enc.json' perms.txt
           grep -qx 'root 640 /etc/atlas-protocol/atlas.env' perms.txt
+          ! sudo test -e /var/lib/atlas-protocol/quantum-keypair.json
+          ! sudo grep -q secret_key /var/lib/atlas-protocol/quantum-keypair.enc.json
 
   adapter:
     name: didcomm-adapter (node ${{ matrix.node }})

@@ -8,12 +8,15 @@
  *   atlas-operator revoke
  *   atlas-operator registry-reset --reason TEXT [--key-file PATH]
  *   atlas-operator attach --agent DID [--ttl MINUTES] [--key-file PATH]
+ *   atlas-operator rewrap-issuer-key
  *
  * Common: --data-dir PATH (default: same resolution as the server)
  *
- * The passphrase is read from the controlling terminal with echo off. It is
- * never accepted from arguments or environment variables, which a governed
- * agent could supply.
+ * The operator passphrase is read from the controlling terminal with echo
+ * off. It is never accepted from arguments or environment variables, which a
+ * governed agent could supply. The keystore passphrase that wraps the issuer
+ * key (#45) is server configuration: it is taken from ATLAS_KEYSTORE_PASSPHRASE
+ * when set, and prompted for otherwise.
  */
 
 import { readFileSync } from "node:fs";
@@ -28,7 +31,7 @@ import {
   operatorSecretPath,
   MIN_PASSPHRASE_LENGTH,
 } from "./operator-key.js";
-import { QuantumSigner } from "./quantum-signer.js";
+import { issuerKeyIsWrapped, QuantumSigner } from "./quantum-signer.js";
 import { registryPath, resetIdentityRegistry, summarizeRegistry } from "./registry-reset.js";
 import { issueAttachToken, DEFAULT_ATTACH_TTL_MINUTES, MAX_ATTACH_TTL_MINUTES } from "./identity-attach.js";
 import type { AgentCredential } from "./agent-identity.js";
@@ -41,6 +44,7 @@ const USAGE = `Usage:
   atlas-operator revoke
   atlas-operator registry-reset --reason TEXT [--key-file PATH]
   atlas-operator attach --agent DID [--ttl MINUTES] [--key-file PATH]
+  atlas-operator rewrap-issuer-key   (stop the server first)
 
 Options:
   --data-dir PATH   Atlas data directory (default: ATLAS_DATA_DIR, CLAUDE_PLUGIN_DATA, or ~/.atlas-protocol)
@@ -98,6 +102,14 @@ async function promptHidden(question: string): Promise<string> {
     });
     muted = true;
   });
+}
+
+/** Keystore passphrase for a wrapped issuer key: from the server's environment, else prompted. */
+async function keystorePassphrase(dataDir: string): Promise<string | undefined> {
+  const fromEnv = process.env.ATLAS_KEYSTORE_PASSPHRASE;
+  if (fromEnv) return fromEnv;
+  if (!issuerKeyIsWrapped(dataDir)) return undefined;
+  return promptHidden("Keystore passphrase (ATLAS_KEYSTORE_PASSPHRASE): ");
 }
 
 async function main(): Promise<number> {
@@ -180,11 +192,25 @@ async function main(): Promise<number> {
       if (!config.audit_hmac_secret) {
         console.error("Note: ATLAS_HMAC_SECRET is not set here; the entry is ML-DSA-65 and operator signed, without HMAC.");
       }
-      const result = await resetIdentityRegistry(config, operator, reason, await QuantumSigner.create(dataDir));
+      const result = await resetIdentityRegistry(config, operator, reason, await QuantumSigner.create(dataDir, { passphrase: await keystorePassphrase(dataDir) }));
       if (!result) throw new Error("Registry disappeared before reset");
       console.log(`REGISTRY_RESET logged (seq ${result.entry.seq}); registry archived to ${result.archivedPath}.`);
       console.log("Restart every running Atlas server (reconnect the MCP server in each Claude Code session) before registering:");
       console.log("they hold the old registry in memory. The next registration is a bootstrap and needs two-channel confirmation.");
+      return 0;
+    }
+
+    case "rewrap-issuer-key": {
+      const signer = await QuantumSigner.create(dataDir, { passphrase: await keystorePassphrase(dataDir) });
+      if (!signer.available) throw new Error("ML-DSA-65 is unavailable; nothing to re-wrap");
+      const p1 = await promptHidden("New keystore passphrase: ");
+      if (p1.length < MIN_PASSPHRASE_LENGTH) throw new Error(`Use at least ${MIN_PASSPHRASE_LENGTH} characters`);
+      const p2 = await promptHidden("Repeat passphrase: ");
+      if (p1 !== p2) throw new Error("Passphrases do not match");
+      signer.rewrap(p1);
+      console.log(`Issuer key ${signer.getPublicKeyHash()?.slice(0, 16)}... re-wrapped in ${signer.getStatus().key_path}.`);
+      console.log("Set ATLAS_KEYSTORE_PASSPHRASE to the new passphrase in the server's environment before starting it.");
+      console.log("Agent keys in agent-keys/ stay under the old passphrase: with the new one they load in memory only, until you delete agent-keys/ and register fresh credentials.");
       return 0;
     }
 
