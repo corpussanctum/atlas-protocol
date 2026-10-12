@@ -837,16 +837,16 @@ describe("AuditLogger — lock and tail edge cases", () => {
   it("breaking a stale lock never removes a fresh one that replaced it", () => {
     const config = makeConfig();
     const lockPath = `${config.audit_log_path}.lock`;
+    // The stale lock, and the fresh one another waiter took after breaking it.
+    // Both exist at once, so their inodes differ.
     writeFileSync(lockPath, "stale");
-    const staleIno = statSync(lockPath).ino;
-    // Another waiter already broke it and took a fresh lock (distinct inode:
-    // created while the stale one still exists)
     writeFileSync(`${lockPath}.new`, "fresh");
+    const staleIno = statSync(lockPath).ino;
+    const freshIno = statSync(`${lockPath}.new`).ino;
     renameSync(`${lockPath}.new`, lockPath);
-    assert.notEqual(statSync(lockPath).ino, staleIno);
 
     breakStaleLock(lockPath, staleIno);
-    assert.equal(readFileSync(lockPath, "utf-8"), "fresh");
+    assert.equal(statSync(lockPath).ino, freshIno);
   });
 
   it("resyncs from a last line longer than the tail window", () => {
