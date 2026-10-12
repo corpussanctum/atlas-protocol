@@ -109,6 +109,8 @@ claude --plugin-dir ./atlas-protocol
 
 Atlas reads configuration from environment variables, a config file (`config.json` in the data directory), and built-in defaults — in that priority order.
 
+`config.json` is type-checked field by field. A wrong-typed or out-of-range value, or an unknown key, is ignored: it keeps its default, triggers a warning on stderr, and is recorded in the `CONFIG_LOADED` audit entry as `rejected_config_fields`. If any entry in `policy_rules` is malformed, the whole custom rule set is rejected and the built-in rules stay in force, so a typo can never silently drop a deny rule.
+
 ### Required
 
 | Variable | Description |
@@ -129,9 +131,9 @@ Atlas reads configuration from environment variables, a config file (`config.jso
 | `ATLAS_VELOCITY_LIMIT` | `30` | Requests per minute before anomaly flag |
 | `ATLAS_POLL_INTERVAL_MS` | `1000` | Telegram polling interval |
 | `WHY_ENGINE_MODEL` | `qwen2.5:3b` | Ollama model for Why Layer experts |
-| `WHY_ENGINE_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
-| `WHY_ENGINE_WINDOW_SIZE` | `50` | Max audit entries in assessment window |
-| `WHY_ENGINE_WINDOW_MINUTES` | `30` | Time window for assessment |
+| `WHY_ENGINE_BASE_URL` | `http://localhost:11434` | Ollama API endpoint. A non-loopback `http://` endpoint logs a startup warning: assessments send audit entries and baselines to it |
+| `WHY_ENGINE_WINDOW_SIZE` | `20` | Max audit entries in assessment window |
+| `WHY_ENGINE_WINDOW_MINUTES` | `60` | Time window for assessment |
 | `ATLAS_QUIET_MODE` | `false` | Enable quiet mode for mature agents |
 | `ATLAS_QUIET_MIN_MATURITY` | `mature` | Minimum maturity for quiet mode (`established` or `mature`) |
 | `ATLAS_QUIET_TOOLS` | `Read,Glob,Grep` | Comma-separated tools eligible for quiet mode |

@@ -61,6 +61,9 @@ export interface AtlasConfig {
   // -- Identity / Briefcase -------------------------------------------------
   /** Path to a DIB Briefcase directory. Empty = standalone mode. */
   briefcase_path: string;
+
+  /** config.json fields that failed validation and kept their defaults (set by loadConfig) */
+  rejected_file_fields?: RejectedConfigField[];
 }
 
 // ---------------------------------------------------------------------------
@@ -757,15 +760,87 @@ function buildDefaults(): AtlasConfig {
 // Loader
 // ---------------------------------------------------------------------------
 
+/** A config-file field that was rejected and left at its default. */
+export interface RejectedConfigField {
+  field: string;
+  reason: string;
+}
+
+const isString = (v: unknown): v is string => typeof v === "string";
+const isIntIn = (min: number, max: number) => (v: unknown): v is number =>
+  Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max;
+
+/**
+ * Per-field validators for config.json. The file is plain JSON, so nothing
+ * guarantees its types. A string timeout, for example, would reach the HTML
+ * approval prompt, and a NaN would distort the fail-closed timer.
+ */
+const FILE_FIELD_VALIDATORS: Partial<Record<keyof AtlasConfig, (v: unknown) => string | null>> = {
+  data_dir: (v) => (isString(v) ? null : "must be a string"),
+  telegram_bot_token: (v) => (isString(v) ? null : "must be a string"),
+  telegram_allowed_chat_ids: (v) =>
+    Array.isArray(v) && v.every((id) => Number.isSafeInteger(id))
+      ? null
+      : "must be an array of integer chat IDs",
+  telegram_poll_interval_ms: (v) => (isIntIn(100, 60_000)(v) ? null : "must be an integer 100–60000"),
+  permission_timeout_seconds: (v) => (isIntIn(1, 86_400)(v) ? null : "must be an integer 1–86400"),
+  policy_rules: (v) =>
+    Array.isArray(v) &&
+    v.every(
+      (r) =>
+        r !== null &&
+        typeof r === "object" &&
+        isString(r.tool_pattern) &&
+        ["deny", "ask", "allow"].includes(r.action) &&
+        (r.reason === undefined || isString(r.reason)) &&
+        (r.mitre_id === undefined || isString(r.mitre_id)),
+    )
+      ? null
+      : "must be an array of {tool_pattern: string, action: deny|ask|allow} rules (whole set rejected so no deny rule is silently dropped)",
+  audit_log_path: (v) => (isString(v) ? null : "must be a string"),
+  audit_hmac_secret: (v) => (isString(v) ? null : "must be a string"),
+  velocity_limit_per_minute: (v) => (isIntIn(1, 10_000)(v) ? null : "must be an integer 1–10000"),
+  briefcase_path: (v) => (isString(v) ? null : "must be a string"),
+};
+
+/**
+ * Apply config.json values that pass validation; invalid or unknown fields
+ * keep their defaults and are reported back.
+ */
+export function applyConfigFile(config: AtlasConfig, raw: unknown): RejectedConfigField[] {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return [{ field: "(root)", reason: "config file must contain a JSON object" }];
+  }
+  const rejected: RejectedConfigField[] = [];
+  for (const [field, value] of Object.entries(raw)) {
+    const validate = FILE_FIELD_VALIDATORS[field as keyof AtlasConfig];
+    if (!validate) {
+      rejected.push({ field, reason: "unknown or non-file-configurable field" });
+      continue;
+    }
+    const problem = validate(value);
+    if (problem) {
+      rejected.push({ field, reason: problem });
+      continue;
+    }
+    (config as unknown as Record<string, unknown>)[field] = value;
+  }
+  return rejected;
+}
+
 export function loadConfig(): AtlasConfig {
   const config = buildDefaults();
 
   if (existsSync(config.config_path)) {
     try {
-      const raw = JSON.parse(readFileSync(config.config_path, "utf-8")) as Partial<AtlasConfig>;
-      Object.assign(config, raw);
+      const raw: unknown = JSON.parse(readFileSync(config.config_path, "utf-8"));
+      config.rejected_file_fields = applyConfigFile(config, raw);
+      for (const { field, reason } of config.rejected_file_fields) {
+        console.error(`[atlas] Warning: ignoring ${field} in ${config.config_path}: ${reason}`);
+      }
     } catch {
       console.error(`[atlas] Warning: could not parse ${config.config_path}, using defaults`);
+      config.rejected_file_fields = [{ field: "(root)", reason: "invalid JSON" }];
     }
   }
 

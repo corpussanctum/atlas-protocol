@@ -182,4 +182,66 @@ describe("loadConfig — JSON config file", () => {
     const config = loadConfig();
     assert.equal(config.permission_timeout_seconds, 60);
   });
+
+  function loadWithFile(contents: unknown) {
+    const dataDir = makeTempDataDir();
+    setEnv("ATLAS_DATA_DIR", dataDir);
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(join(dataDir, "config.json"), JSON.stringify(contents), "utf-8");
+    return loadConfig();
+  }
+
+  it("rejects a string timeout instead of passing it into the approval prompt", () => {
+    const config = loadWithFile({ permission_timeout_seconds: "<b>never</b>" });
+    assert.equal(config.permission_timeout_seconds, 120);
+    assert.deepEqual(config.rejected_file_fields?.map((r) => r.field), ["permission_timeout_seconds"]);
+  });
+
+  it("rejects non-finite and out-of-range numbers", () => {
+    const config = loadWithFile({
+      permission_timeout_seconds: 0,
+      velocity_limit_per_minute: 1.5,
+      telegram_poll_interval_ms: 10,
+    });
+    assert.equal(config.permission_timeout_seconds, 120);
+    assert.equal(config.velocity_limit_per_minute, 30);
+    assert.equal(config.telegram_poll_interval_ms, 1000);
+    assert.equal(config.rejected_file_fields?.length, 3);
+  });
+
+  it("rejects chat IDs that are not integers", () => {
+    const config = loadWithFile({ telegram_allowed_chat_ids: ["12345"] });
+    assert.deepEqual(config.telegram_allowed_chat_ids, []);
+  });
+
+  it("rejects the whole policy_rules set if any rule is malformed", () => {
+    const defaults = loadWithFile({}).policy_rules;
+    const config = loadWithFile({
+      policy_rules: [
+        { tool_pattern: "Bash(*)", action: "allow" },
+        { tool_pattern: "Bash(rm *)", action: "dney" },
+      ],
+    });
+    assert.deepEqual(config.policy_rules, defaults);
+    assert.equal(config.rejected_file_fields?.[0].field, "policy_rules");
+  });
+
+  it("accepts a well-formed custom policy_rules set", () => {
+    const rules = [{ tool_pattern: "Bash(rm *)", action: "deny", reason: "no rm" }];
+    const config = loadWithFile({ policy_rules: rules });
+    assert.deepEqual(config.policy_rules, rules);
+    assert.deepEqual(config.rejected_file_fields, []);
+  });
+
+  it("ignores unknown fields and config_path overrides", () => {
+    const config = loadWithFile({ config_path: "/etc/elsewhere.json", surprise: true });
+    assert.notEqual(config.config_path, "/etc/elsewhere.json");
+    assert.deepEqual(config.rejected_file_fields?.map((r) => r.field).sort(), ["config_path", "surprise"]);
+  });
+
+  it("rejects a non-object config file", () => {
+    const config = loadWithFile([1, 2, 3]);
+    assert.equal(config.rejected_file_fields?.[0].field, "(root)");
+    assert.equal(config.permission_timeout_seconds, 120);
+  });
 });

@@ -4,6 +4,25 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **`config.json` is now validated per field** (CodeQL `js/file-access-to-http`
+  triage, #16). Previously `Object.assign` copied any JSON value into the live
+  config, so a string `permission_timeout_seconds` reached the HTML-formatted
+  Telegram approval prompt and a non-numeric value distorted the fail-closed
+  timer. Invalid or unknown fields now keep their defaults, warn on stderr, and
+  are recorded in the `CONFIG_LOADED` audit entry as `rejected_config_fields`.
+  A malformed `policy_rules` entry rejects the whole custom set, so no deny
+  rule is silently dropped. `config_path` is no longer overridable from the file.
+- **Why Layer endpoint check:** a non-loopback plain-HTTP `WHY_ENGINE_BASE_URL`
+  logs a startup warning, and `CONFIG_LOADED` records whether the endpoint is
+  loopback/encrypted. Assessments send audit entries and baseline profiles to it.
+
+### Fixed
+- README listed Why Layer window defaults as 50 entries / 30 minutes; the code
+  uses 20 / 60.
+- DIDComm adapter test checked the invitation URL with a prefix match; it now
+  compares the parsed origin.
+
 ## [1.0.3] - 2026-10-12
 
 Stabilization: ProximityMesh hardware selection actually works and never

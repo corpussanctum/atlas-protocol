@@ -196,6 +196,32 @@ export function loadWhyConfig(): WhyEngineConfig {
   };
 }
 
+/**
+ * Classify the Why Layer endpoint. Assessments send recent audit entries and
+ * baseline profiles to this URL, so a non-loopback plain-HTTP endpoint sends
+ * them across the network unencrypted. Reported, not blocked: LAN GPU
+ * nodes are a legitimate deployment.
+ */
+export function describeWhyEndpoint(baseUrl: string): {
+  loopback: boolean;
+  encrypted: boolean;
+  warning: string | null;
+} {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return { loopback: false, encrypted: false, warning: `WHY_ENGINE_BASE_URL is not a valid URL: ${baseUrl}` };
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const loopback = host === "localhost" || host === "::1" || /^127(\.\d{1,3}){3}$/.test(host);
+  const encrypted = url.protocol === "https:";
+  const warning = !loopback && !encrypted
+    ? `Why Layer sends audit entries and baselines unencrypted to ${url.host}; use https or a loopback endpoint to keep them on-host`
+    : null;
+  return { loopback, encrypted, warning };
+}
+
 // ---------------------------------------------------------------------------
 // Ollama caller
 // ---------------------------------------------------------------------------
