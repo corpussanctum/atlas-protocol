@@ -265,6 +265,16 @@ atlas-operator registry-reset --reason "bootstrap credential expired"
 
 This writes a `REGISTRY_RESET` audit entry carrying the registry's SHA3-256 and an operator signature, then archives the registry to `identity-registry.reset-<timestamp>.json`. Restart every running Atlas server afterwards, since each one holds the old registry in memory. The next `atlas_identity_register` is a bootstrap and needs two-channel confirmation again.
 
+### Re-attaching after a restart
+
+A session's binding to its credential lives in server memory, so after an MCP reconnect or restart the credential is still valid but unused, and every permission request is denied `UNREGISTERED_AGENT`. Instead of a reset, the operator issues a one-time attach token:
+
+```
+atlas-operator attach --agent did:atlas:<uuid> [--ttl 10]
+```
+
+Then the agent calls `atlas_identity_attach` in the restarted session. The token carries the operator's signature and is bound to that credential's hash, so any edit to the credential voids it. It's single-use and expires after 10 minutes (60 at most). Delegating from an attached credential still needs restart-durable agent keys (#4).
+
 ## Quiet mode
 
 For mature agents (200+ sessions) performing low-risk actions, quiet mode auto-approves requests without Telegram involvement — reducing noise while maintaining full audit trail coverage.
@@ -339,7 +349,7 @@ Drift signals are included in the Why Layer assessment, enriched into the audit 
 
 ## MCP tools
 
-Atlas exposes 26 MCP tools to the Claude Code session:
+Atlas exposes 27 MCP tools to the Claude Code session:
 
 ### Core
 
@@ -354,6 +364,7 @@ Atlas exposes 26 MCP tools to the Claude Code session:
 | Tool | Description |
 |---|---|
 | `atlas_identity_register` | Issue a signed agent credential (bootstrap requires two-channel confirmation) |
+| `atlas_identity_attach` | Re-bind a restarted session to an existing credential with an operator-signed attach token |
 | `atlas_identity_verify` | Verify a credential by agentId |
 | `atlas_identity_list` | List credentials (filter: active, revoked, expired, delegated, all) |
 | `atlas_identity_revoke` | Revoke a credential |
@@ -502,7 +513,7 @@ src/
 ├── mcp/
 │   ├── context.ts         # Shared deps + session state for tool handlers
 │   ├── helpers.ts         # Confirmation-code files, credential time remaining
-│   └── tools/             # 26 tools by domain: core, identity, baseline, policy,
+│   └── tools/             # 27 tools by domain: core, identity, baseline, policy,
 │                          #   break-glass, audit, why, proximity
 ├── config.ts              # Configuration loader + default policy rules
 ├── policy-engine.ts       # Rule evaluation, anomaly detection, velocity tracking

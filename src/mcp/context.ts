@@ -13,6 +13,7 @@ import type { TelegramBot } from "../telegram.js";
 import type { IdentityContext } from "../identity-provider.js";
 import type { BaselineStore } from "../baseline-store.js";
 import type { BreakGlassManager } from "../break-glass.js";
+import type { AttachManager } from "../identity-attach.js";
 import type { QuietModeConfig } from "../quiet-mode.js";
 import type { AuditRotationManager } from "../audit-rotation.js";
 import type { WhyEngineConfig } from "../why-engine.js";
@@ -35,6 +36,7 @@ export interface ToolContext {
   identityContext: IdentityContext;
   baselineStore: BaselineStore;
   breakGlass: BreakGlassManager;
+  identityAttach: AttachManager;
   quietConfig: QuietModeConfig;
   proximityConfig: ProximityMeshConfig;
   getHardware(): Promise<HardwareAdapterSet>;
@@ -45,7 +47,7 @@ export interface ToolContext {
   /** Recent audit entries tracked for the Why Layer (shared, mutated by the server) */
   recentAuditEntries: AuditEntry[];
 
-  /** Agent registered in this session via atlas_identity_register */
+  /** Agent bound to this session via atlas_identity_register or atlas_identity_attach */
   sessionAgentId: string | undefined;
   lastWhyAssessmentTime: Date | undefined;
   readonly proximityMesh: ProximityMesh | undefined;

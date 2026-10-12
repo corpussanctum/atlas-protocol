@@ -61,6 +61,7 @@ export type AuditEventType =
   | "CHECKPOINT"
   | "KEY_ROTATION"
   | "REGISTRY_RESET"
+  | "IDENTITY_ATTACHED"
   // Proximity Mesh events (SPEC § 13.4)
   | "PROXIMITY_DISCOVERY"
   | "PROXIMITY_RANGE"

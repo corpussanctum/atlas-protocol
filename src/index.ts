@@ -32,6 +32,7 @@ import { BaselineStore } from "./baseline-store.js";
 import { ingestEntry as baselineIngestEntry, ingestAssessment as baselineIngestAssessment } from "./baseline-engine.js";
 import { BreakGlassManager } from "./break-glass.js";
 import { readOperatorPublicKey } from "./operator-key.js";
+import { AttachManager } from "./identity-attach.js";
 import type { OperatorPublicKey } from "./operator-key.js";
 import { AuditRotationManager } from "./audit-rotation.js";
 import { loadQuietConfig } from "./quiet-mode.js";
@@ -92,6 +93,7 @@ async function main(): Promise<void> {
     console.error(`[atlas] Warning: break-glass disabled: ${operatorKeyError}`);
   }
   const breakGlass = await BreakGlassManager.open(config.data_dir, operatorKey);
+  const identityAttach = await AttachManager.open(config.data_dir, operatorKey);
 
   // Quiet mode
   const quietConfig = loadQuietConfig();
@@ -261,6 +263,7 @@ async function main(): Promise<void> {
     identityContext,
     baselineStore,
     breakGlass,
+    identityAttach,
     quietConfig,
     proximityConfig,
     getHardware,

@@ -253,6 +253,21 @@ For **Development** conformance, two-channel confirmation MAY be skipped (via `A
 
 If the registry must be reset, an operator with physical host access MAY remove the identity registry file at `<data_dir>/identity-registry.json`. Reasons include an accidental or compromised first registration, or no unexpired, unrevoked credential holding `identity:register` remaining, which otherwise locks registration out permanently. A `REGISTRY_RESET` event MUST be written to the audit log before removal. It MUST record the SHA3-256 of the registry file and SHOULD carry an operator signature (§9) over its fields. Implementations SHOULD archive the file (mode 0600) rather than delete it. Running gatekeepers MUST be restarted before re-registration, since they hold the registry in memory. After removal, the bootstrap window re-opens and two-channel confirmation MUST be repeated (for Production/Research conformance). The reference implementation provides this as `atlas-operator registry-reset --reason TEXT`.
 
+**Re-attaching after a gatekeeper restart:**
+
+A gatekeeper MAY hold a session's binding to its credential only in memory. When it does, a restart leaves the credential valid but unbound, and attestation denies every request (`UNREGISTERED_AGENT`). To re-bind without a reset, the operator MAY issue an **attach token** that names one credential. The gatekeeper MUST accept it only if all of the following hold:
+
+| Property | Requirement |
+|---|---|
+| **Signature** | ML-DSA-65 operator signature (§9) over `version`, `agent_id`, `credential_hash`, `created_at`, `expires_at`, `nonce`, `operator_key_id`, verified against the operator key pinned at gatekeeper startup |
+| **Binding** | `credential_hash` MUST equal the registry's current `credentialHash` for `agent_id`, so any edit to the credential voids the token |
+| **Credential** | Verifies against the issuer key; not revoked or expired; delegation chain intact |
+| **TTL** | At most 60 minutes, checked from the signed fields |
+| **Single use** | Consumed atomically on the first attempt, whether or not it verifies. Nonces of accepted tokens MUST be recorded until expiry and replays rejected |
+| **Session** | MUST NOT replace a session binding that still attests successfully |
+
+A successful attach MUST log `IDENTITY_ATTACHED`. A rejected token MUST log `POLICY_DENY` with `event_detail: IDENTITY_ATTACH_REJECTED`. Attaching does not restore the agent's secret key. The reference implementation provides this as `atlas-operator attach --agent DID` plus the `atlas_identity_attach` tool.
+
 ## 5. Credential delegation
 
 ### 5.1 Delegation constraints

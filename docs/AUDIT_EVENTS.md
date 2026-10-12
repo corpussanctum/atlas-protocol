@@ -35,6 +35,7 @@ CI enforces that this file matches the code in both directions (`npm run check:v
 |---|---|
 | `CREDENTIAL_EXPIRED` | A request presented an expired agent credential |
 | `CREDENTIAL_EXPIRY_WARNING` | An active credential is close to expiry |
+| `IDENTITY_ATTACHED` | `atlas_identity_attach` re-bound the session to an existing credential using an operator-signed attach token; `meta` has `agent_id`, `credential_hash`, `operator_key_id`, `token_nonce` |
 | `REGISTRY_RESET` | The operator ran `atlas-operator registry-reset`; written before the registry is archived. `meta` holds the registry's SHA3-256, credential counts, `archived_as`, and an ML-DSA-65 `operator_signature` over `action`, `reason`, `registry_sha3`, `archived_as`, `credentials_total`, `credentials_active`, `operator_key_id`, `timestamp` (SPEC §4.6) |
 
 ### Proximity Mesh (research/demo)
@@ -64,6 +65,7 @@ Some administrative actions are recorded under a general event type, with the sp
 | `CASCADE_REVOCATION` | `CONFIG_LOADED` | `atlas_identity_cascade_revoke` revoked a parent and its descendants |
 | `BOOTSTRAP_CONFIRM_SKIPPED` | `CONFIG_LOADED` | Two-channel bootstrap confirmation was bypassed by environment variable |
 | `BOOTSTRAP_CONFIRMATION_TIMEOUT` | `POLICY_DENY` | The bootstrap confirmation code was not returned in time |
+| `IDENTITY_ATTACH_REJECTED` | `POLICY_DENY` | An attach token failed verification (`meta.reason`: bad signature, expired, replayed, credential changed or invalid, ...). The token is consumed either way |
 | `BREAK_GLASS_ACTIVATION_REFUSED` | `CONFIG_LOADED` | The agent called `atlas_break_glass_activate`; refused (only the operator can activate, via `atlas-operator`). Break-glass approvals themselves are `POLICY_ALLOW` entries with `meta.break_glass: true` |
 | `BREAK_GLASS_REVOKED` | `CONFIG_LOADED` | Emergency bypass revoked |
 | `AUDIT_LOG_ROTATED` | `CONFIG_LOADED` | The audit log was rotated into an archive |
