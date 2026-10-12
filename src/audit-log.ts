@@ -17,7 +17,18 @@
  */
 
 import { createHmac, createHash, randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { dirname } from "node:path";
 import type { AtlasConfig } from "./config.js";
 import type { PolicyResult, PermissionRequest } from "./policy-engine.js";
@@ -129,11 +140,94 @@ function sha256(data: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Cross-process append lock
+// ---------------------------------------------------------------------------
+//
+// Every Claude Code session runs its own Atlas server, and they all append to
+// the same log. Without a lock, two instances extend the chain from their own
+// stale (seq, prev_hash) and fork it (#30). The lock is an O_EXCL lockfile so
+// it needs no native addon; a holder that died mid-append leaves a file that
+// is broken after LOCK_STALE_MS.
+
+const LOCK_STALE_MS = 5_000;
+const LOCK_GIVE_UP_MS = 15_000;
+const LOCK_POLL_MS = 5;
+/** Bytes read from the end of the log to find the last line (entries are ~5 KB). */
+const TAIL_READ_BYTES = 64 * 1024;
+
+const sleepCell = new Int32Array(new SharedArrayBuffer(4));
+function sleepSync(ms: number): void {
+  Atomics.wait(sleepCell, 0, 0, ms);
+}
+
+function acquireLock(lockPath: string): boolean {
+  const start = Date.now();
+  for (;;) {
+    try {
+      const fd = openSync(lockPath, "wx", 0o600);
+      writeSync(fd, String(process.pid));
+      closeSync(fd);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") return false;
+    }
+    try {
+      if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
+        unlinkSync(lockPath);
+        continue;
+      }
+    } catch {
+      continue; // released between our open and stat
+    }
+    if (Date.now() - start > LOCK_GIVE_UP_MS) return false;
+    sleepSync(LOCK_POLL_MS);
+  }
+}
+
+function releaseLock(lockPath: string): void {
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // already gone (broken as stale by another instance)
+  }
+}
+
+/** Last non-empty line of a file, reading only its tail when possible. */
+function readLastLine(path: string): string | null {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const size = statSync(path).size;
+    if (size === 0) return null;
+    const start = Math.max(0, size - TAIL_READ_BYTES);
+    const buf = Buffer.alloc(size - start);
+    readSync(fd, buf, 0, buf.length, start);
+    const text = buf.toString("utf-8").trimEnd();
+    const nl = text.lastIndexOf("\n");
+    if (nl === -1 && start > 0) {
+      // Last line is longer than the tail window — fall back to a full read.
+      const lines = readFileSync(path, "utf-8").trimEnd().split("\n");
+      return lines[lines.length - 1] || null;
+    }
+    return text.slice(nl + 1) || null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Audit Logger
 // ---------------------------------------------------------------------------
 
 export class AuditLogger {
   private readonly logPath: string;
+  private readonly lockPath: string;
+  /** Log size right after this instance last read or wrote it; -1 = missing */
+  private lastKnownSize: number;
   private readonly hmacSecret: string;
   private readonly signer: QuantumSigner | null;
   private prevHash: string;
@@ -151,6 +245,7 @@ export class AuditLogger {
     signer?: QuantumSigner | null,
   ) {
     this.logPath = config.audit_log_path;
+    this.lockPath = `${config.audit_log_path}.lock`;
     this.hmacSecret = config.audit_hmac_secret;
     this.signer = signer ?? null;
     this.checkpointInterval = parseInt(process.env.ATLAS_CHECKPOINT_INTERVAL ?? "100", 10);
@@ -171,6 +266,34 @@ export class AuditLogger {
     const { hash, seq } = this.getLastHashAndSeq();
     this.prevHash = hash;
     this.seq = seq;
+    this.lastKnownSize = this.currentSize();
+  }
+
+  private currentSize(): number {
+    try {
+      return statSync(this.logPath).size;
+    } catch {
+      return -1;
+    }
+  }
+
+  /**
+   * Re-read the chain head if another instance appended since we last looked.
+   * Must be called with the append lock held. A missing or empty file (just
+   * rotated) keeps the in-memory head, which is the rotation's chain anchor.
+   */
+  private syncChainHead(): void {
+    const size = this.currentSize();
+    if (size === this.lastKnownSize || size <= 0) return;
+    const lastLine = readLastLine(this.logPath);
+    if (!lastLine) return;
+    this.prevHash = sha3_256(lastLine);
+    try {
+      const lastEntry = JSON.parse(lastLine) as AuditEntry;
+      if (typeof lastEntry.seq === "number") this.seq = lastEntry.seq + 1;
+    } catch {
+      // Unparseable tail: chain to it by hash, keep our own seq.
+    }
   }
 
   /**
@@ -218,6 +341,47 @@ export class AuditLogger {
       verdict?: "allow" | "deny";
       meta?: Record<string, unknown>;
     } = {}
+  ): AuditEntry {
+    const locked = acquireLock(this.lockPath);
+    if (!locked) {
+      console.error("[atlas] audit lock unavailable — appending unlocked; chain may fork");
+    }
+    let entry: AuditEntry;
+    try {
+      this.syncChainHead();
+      entry = this.appendEntry(event, options);
+      this.lastKnownSize = this.currentSize();
+    } finally {
+      if (locked) releaseLock(this.lockPath);
+    }
+
+    // Auto-emit checkpoint if interval reached (non-recursive: checkpoints don't trigger more checkpoints)
+    if (event !== "CHECKPOINT") {
+      this.entriesSinceCheckpoint++;
+      if (this.checkpointInterval > 0 && this.entriesSinceCheckpoint >= this.checkpointInterval) {
+        this.entriesSinceCheckpoint = 0;
+        this.log("CHECKPOINT", {
+          meta: {
+            checkpoint_seq: entry.seq,
+            checkpoint_hash: this.prevHash,
+            entries_since_start: this.seq,
+          },
+        });
+      }
+    }
+
+    return entry;
+  }
+
+  /** Build, sign, and append one entry. Caller holds the append lock. */
+  private appendEntry(
+    event: AuditEventType,
+    options: {
+      permission?: PermissionRequest;
+      policy_result?: PolicyResult;
+      verdict?: "allow" | "deny";
+      meta?: Record<string, unknown>;
+    },
   ): AuditEntry {
     const entry: AuditEntry = {
       id: randomUUID(),
@@ -273,21 +437,6 @@ export class AuditLogger {
     // Update chain hash (SHA3-256)
     this.prevHash = sha3_256(line);
 
-    // Auto-emit checkpoint if interval reached (non-recursive: checkpoints don't trigger more checkpoints)
-    if (event !== "CHECKPOINT") {
-      this.entriesSinceCheckpoint++;
-      if (this.checkpointInterval > 0 && this.entriesSinceCheckpoint >= this.checkpointInterval) {
-        this.entriesSinceCheckpoint = 0;
-        this.log("CHECKPOINT", {
-          meta: {
-            checkpoint_seq: entry.seq,
-            checkpoint_hash: this.prevHash,
-            entries_since_start: this.seq,
-          },
-        });
-      }
-    }
-
     return entry;
   }
 
@@ -322,10 +471,19 @@ export class AuditLogger {
    *   2. Sequence number continuity (anti-truncation)
    *   3. HMAC signatures (if secret configured)
    *   4. ML-DSA-65 signatures (if signer available)
+   *   5. Entry id uniqueness (replay)
+   *
+   * Concurrent-writer forks (#30) are reported in `forks`, not `errors`: an
+   * entry whose prev_hash names an earlier, non-adjacent line and whose seq is
+   * that line's seq + 1 was written by a second server instance from a stale
+   * chain head. Logs written before the append lock existed contain these.
+   * They do not fail verification, but within a forked region the tail of
+   * each branch is not protected against truncation by the chain alone.
    */
   verify(): {
     valid: boolean;
     errors: string[];
+    forks: string[];
     stats: {
       total_entries: number;
       pq_signed: number;
@@ -333,9 +491,11 @@ export class AuditLogger {
       legacy_sha256: number;
       checkpoints: number;
       max_seq: number;
+      forks: number;
     };
   } {
     const errors: string[] = [];
+    const forks: string[] = [];
     const stats = {
       total_entries: 0,
       pq_signed: 0,
@@ -343,22 +503,28 @@ export class AuditLogger {
       legacy_sha256: 0,
       checkpoints: 0,
       max_seq: -1,
+      forks: 0,
     };
 
     if (!existsSync(this.logPath)) {
-      return { valid: true, errors: [], stats };
+      return { valid: true, errors: [], forks: [], stats };
     }
 
     const content = readFileSync(this.logPath, "utf-8").trim();
-    if (!content) return { valid: true, errors: [], stats };
+    if (!content) return { valid: true, errors: [], forks: [], stats };
 
     const lines = content.split("\n");
-    let expectedPrevHash = "GENESIS";
+    /** Hash (SHA3-256 and legacy SHA-256) of every earlier line → line index */
+    const lineByHash = new Map<string, number>();
+    /** seq of each line, when present and the line parsed */
+    const seqs: (number | undefined)[] = [];
+    const seenIds = new Set<string>();
 
     for (let i = 0; i < lines.length; i++) {
       try {
         const entry: AuditEntry = JSON.parse(lines[i]);
         stats.total_entries++;
+        seqs[i] = entry.seq;
 
         // Determine if this is a legacy (SHA-256) or modern (SHA3-256) entry
         const isLegacy = !entry.hash_algorithm;
@@ -366,21 +532,42 @@ export class AuditLogger {
 
         // Track checkpoints
         if (entry.event === "CHECKPOINT") stats.checkpoints++;
+        if (entry.seq !== undefined) stats.max_seq = Math.max(stats.max_seq, entry.seq);
 
-        // Verify sequence continuity (anti-truncation)
-        if (entry.seq !== undefined) {
-          if (stats.max_seq >= 0 && entry.seq !== stats.max_seq + 1) {
-            errors.push(
-              `Line ${i + 1}: sequence gap — expected seq ${stats.max_seq + 1}, got ${entry.seq}`
-            );
+        // A copied signed entry would otherwise pass as a fork
+        if (entry.id) {
+          if (seenIds.has(entry.id)) {
+            errors.push(`Line ${i + 1}: duplicate entry id ${entry.id} — entry replayed`);
           }
-          stats.max_seq = entry.seq;
+          seenIds.add(entry.id);
         }
 
-        // Verify hash chain
-        if (entry.prev_hash !== expectedPrevHash) {
+        // Resolve the parent: the adjacent line, or an earlier line (fork).
+        // The entry's own algorithm says how its writer hashed the parent.
+        const adjacentHash =
+          i === 0 ? "GENESIS" : isLegacy ? sha256(lines[i - 1]) : sha3_256(lines[i - 1]);
+        let parent: number | undefined;
+        if (entry.prev_hash === adjacentHash) {
+          parent = i - 1;
+        } else {
+          parent = lineByHash.get(entry.prev_hash);
+          if (parent === undefined) {
+            errors.push(
+              `Line ${i + 1}: chain broken — expected prev_hash ${adjacentHash.slice(0, 12)}..., got ${entry.prev_hash.slice(0, 12)}...`
+            );
+          }
+        }
+
+        // Verify sequence continuity against the resolved parent (anti-truncation)
+        const parentSeq = parent !== undefined && parent >= 0 ? seqs[parent] : undefined;
+        if (entry.seq !== undefined && parentSeq !== undefined && entry.seq !== parentSeq + 1) {
           errors.push(
-            `Line ${i + 1}: chain broken — expected prev_hash ${expectedPrevHash.slice(0, 12)}..., got ${entry.prev_hash.slice(0, 12)}...`
+            `Line ${i + 1}: sequence gap — expected seq ${parentSeq + 1}, got ${entry.seq}`
+          );
+        } else if (parent !== undefined && parent !== i - 1) {
+          stats.forks++;
+          forks.push(
+            `Line ${i + 1}: concurrent-writer fork — seq ${entry.seq} chains to line ${parent + 1} (seq ${parentSeq}), not line ${i}`
           );
         }
 
@@ -405,35 +592,15 @@ export class AuditLogger {
             errors.push(`Line ${i + 1}: ML-DSA-65 signature invalid — entry may be tampered`);
           }
         }
-
-        // Compute hash for next entry's chain check.
-        // Use the same algorithm that the NEXT entry would expect.
-        // For the transition: if the next entry is modern, use SHA3-256.
-        // If we're at the end or next is legacy, use whatever the current entry implies.
-        // Simplification: always compute SHA3-256 for modern entries, SHA-256 for legacy.
-        // The next entry's prev_hash was computed by the logger that wrote it.
-        if (i + 1 < lines.length) {
-          // Peek at next entry to determine which hash it expects
-          try {
-            const nextEntry: AuditEntry = JSON.parse(lines[i + 1]);
-            const nextIsLegacy = !nextEntry.hash_algorithm;
-            expectedPrevHash = nextIsLegacy
-              ? sha256(lines[i])
-              : sha3_256(lines[i]);
-          } catch {
-            // If next line is invalid JSON, use SHA3-256 (modern default)
-            expectedPrevHash = sha3_256(lines[i]);
-          }
-        } else {
-          // Last entry — compute for chain state
-          expectedPrevHash = sha3_256(lines[i]);
-        }
       } catch {
         errors.push(`Line ${i + 1}: invalid JSON`);
         stats.total_entries++;
       }
+
+      lineByHash.set(sha3_256(lines[i]), i);
+      lineByHash.set(sha256(lines[i]), i);
     }
 
-    return { valid: errors.length === 0, errors, stats };
+    return { valid: errors.length === 0 && forks.length === 0, errors, forks, stats };
   }
 }

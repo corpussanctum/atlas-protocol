@@ -337,7 +337,7 @@ The `seq` field is a **global monotonic counter** that spans the entire audit tr
 | **Starting value** | `seq` MUST start at `0` for the first entry ever written by this gatekeeper instance. |
 | **Increment** | Each subsequent entry MUST have `seq` equal to the previous entry's `seq + 1`. No gaps. No duplicates. |
 | **Scope** | Global across all files. After rotation, the new file's first entry MUST continue the sequence from the prior file's last `seq + 1`. |
-| **Concurrency** | A single gatekeeper process MUST be the sole writer. If two writers race, the audit log is considered corrupt. Implementations MUST NOT support concurrent writers. |
+| **Concurrency** | The log MUST have a single linear chain. When several gatekeeper processes share one log (e.g. one per agent session), each append MUST hold an exclusive cross-process lock spanning the read of the chain head (last `seq`, last line hash) and the write. If two writers race, the audit log is considered corrupt. |
 | **Gap semantics** | A verifier that encounters `seq` values `[0, 1, 2, 5, 6]` MUST report entries 3 and 4 as missing (potential truncation). |
 | **Rotation bridge** | The rotation manifest (§6.5) MUST record `final_seq` (last `seq` in the rotated file) and `next_seq` (expected first `seq` of the new file, equal to `final_seq + 1`). |
 
@@ -347,6 +347,8 @@ The `seq` field is a **global monotonic counter** that spans the entire audit tr
 |---|---|
 | Gap in `seq` | MUST report error: "sequence gap at seq N — entries may be truncated" |
 | Duplicate `seq` | MUST report error: "duplicate seq N — log may be corrupted" |
+| Concurrent-writer fork (duplicate `seq` whose `prev_hash` resolves to an earlier, non-adjacent entry with `seq - 1`) | MUST report error. SHOULD label it as a fork, distinct from an unresolvable `prev_hash`, since it indicates a writer race rather than removal or alteration. The tail of each forked branch is not truncation-protected by the chain. |
+| Duplicate entry `id` | MUST report error (replayed entry) |
 | `seq` not starting at expected value (after rotation) | MUST report error unless manifest confirms the expected starting `seq` |
 | Missing `seq` field on an entry | MUST treat as a legacy entry (pre-v0.8.1) and skip sequence validation for that entry only |
 
