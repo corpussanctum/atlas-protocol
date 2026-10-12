@@ -101,8 +101,8 @@
   },
   {
     "tool": "atlas_proximity_disconnect",
-    "isError": false,
-    "text": "Session nope closed."
+    "isError": true,
+    "text": "Session nope not found"
   },
   {
     "tool": "atlas_identity_revoke",

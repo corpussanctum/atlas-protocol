@@ -457,12 +457,13 @@ export class ProximityMesh {
   }
 
   /** Close a specific session */
-  async closeSession(sessionId: string): Promise<void> {
+  /** Close a session. Returns false if no such session was active. */
+  async closeSession(sessionId: string): Promise<boolean> {
     const session = this.activeSessions.get(sessionId);
-    if (session) {
-      await session.close();
-      this.activeSessions.delete(sessionId);
-    }
+    if (!session) return false;
+    await session.close();
+    this.activeSessions.delete(sessionId);
+    return true;
   }
 
   /** Close all sessions and stop advertising */

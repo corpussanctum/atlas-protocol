@@ -456,9 +456,11 @@ describe("Proximity Mesh — full session establishment", () => {
     assert.equal(mesh.listSessions().length, 2);
     assert.notEqual(session1.sessionId, session2.sessionId);
 
-    // Close one
-    await mesh.closeSession(session1.sessionId);
+    // Close one; closing it again or an unknown id reports false
+    assert.equal(await mesh.closeSession(session1.sessionId), true);
     assert.equal(mesh.listSessions().length, 1);
+    assert.equal(await mesh.closeSession(session1.sessionId), false);
+    assert.equal(await mesh.closeSession("no-such-session"), false);
 
     // Shutdown closes all
     await mesh.shutdown();

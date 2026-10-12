@@ -4,6 +4,15 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `atlas_proximity_disconnect` reported "Session … closed." for IDs that
+  were never active; it now returns `isError` with "not found" (#26).
+- Docs claimed 97 policy rules (90 deny) and "120+" fixtures. The default set
+  has always been **96 rules (89 deny, 7 ask)**, and `atlas_test_policy` runs
+  **79** fixtures; the March "96→97" correction was itself a miscount. No rule
+  was removed (#25). `check:versions` now derives these counts from
+  `src/config.ts` and the test runner, and fails on any prose mismatch.
+
 ### Changed
 - MCP tool definitions and handlers moved from `src/index.ts` into
   `src/mcp/tools/<domain>.ts` with a shared `ToolContext`, and versions moved

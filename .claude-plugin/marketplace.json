@@ -14,7 +14,7 @@
     {
       "name": "atlas-gatekeeper",
       "version": "1.0.5",
-      "description": "Fail-closed agent governance: 97-rule policy engine, ML-DSA-65 signed audit trails, identity attestation, credential delegation, issuer key rotation, behavioral drift detection, and Telegram operator relay.",
+      "description": "Fail-closed agent governance: 96-rule policy engine, ML-DSA-65 signed audit trails, identity attestation, credential delegation, issuer key rotation, behavioral drift detection, and Telegram operator relay.",
       "source": {
         "type": "github",
         "repo": "corpussanctum/atlas-protocol",
