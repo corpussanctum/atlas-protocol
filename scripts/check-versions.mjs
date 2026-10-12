@@ -9,12 +9,15 @@
  *   credential       src/agent-identity.ts CREDENTIAL_VERSION
  *
  * Every other copy (index.ts constants, plugin manifests, lockfile, README
- * and SPEC version maps, CHANGELOG, README tool count) must match.
+ * and SPEC version maps, CHANGELOG, README tool count) must match. Also checks,
+ * in both directions, README tool table vs registered tools and
+ * docs/AUDIT_EVENTS.md vs the AuditEventType union and emitted event_detail values.
  *
  * Usage: node scripts/check-versions.mjs   (exit 1 on any mismatch)
  */
 
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -69,7 +72,41 @@ for (const m of readme.matchAll(/(\d+) (?:MCP )?tools\b/g)) {
   checks.push([`README "${m[0]}"`, m[1], toolCount]);
 }
 
+// Two-way set checks: documented names vs names that exist in code
+const setChecks = [];
+function compareSets(label, inCode, inDocs) {
+  for (const name of inCode) if (!inDocs.has(name)) setChecks.push(`${label}: "${name}" exists in code but is undocumented`);
+  for (const name of inDocs) if (!inCode.has(name)) setChecks.push(`${label}: "${name}" is documented but not in code`);
+}
+
+// MCP tools: registered in index.ts vs README tool tables
+const registeredTools = new Set([...indexTs.matchAll(/name:\s*"(atlas_[a-z_]+)"/g)].map((m) => m[1]));
+const readmeTools = new Set([...readme.matchAll(/^\|\s*`(atlas_[a-z_]+)`\s*\|/gm)].map((m) => m[1]));
+compareSets("README tool table", registeredTools, readmeTools);
+
+// Audit events: AuditEventType union + emitted event_detail values vs docs/AUDIT_EVENTS.md
+const auditLogTs = read("src/audit-log.ts");
+const union = auditLogTs.match(/export type AuditEventType =([\s\S]*?);/);
+if (!union) throw new Error("src/audit-log.ts: could not find AuditEventType union");
+const eventTypes = new Set([...union[1].matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]));
+const catalog = read("docs/AUDIT_EVENTS.md");
+const [typesPart, detailPart = ""] = catalog.split(/^## `meta\.event_detail`/m);
+const rowNames = (text) => new Set([...text.matchAll(/^\|\s*`([A-Z_]+)`\s*\|/gm)].map((m) => m[1]));
+compareSets("docs/AUDIT_EVENTS.md event types", eventTypes, rowNames(typesPart));
+
+const srcFiles = execFileSync("git", ["ls-files", "src"], { cwd: root, encoding: "utf-8" })
+  .split("\n")
+  .filter((f) => f.endsWith(".ts"));
+const emittedDetails = new Set(
+  srcFiles.flatMap((f) => [...read(f).matchAll(/event_detail:\s*"([A-Z_]+)"/g)].map((m) => m[1])),
+);
+compareSets("docs/AUDIT_EVENTS.md event_detail", emittedDetails, rowNames(detailPart));
+
 let failed = 0;
+for (const problem of setChecks) {
+  console.error(`MISMATCH ${problem}`);
+  failed++;
+}
 for (const [label, actual, expected] of checks) {
   if (actual !== expected) {
     console.error(`MISMATCH ${label}: found ${actual ?? "(missing)"}, expected ${expected}`);
@@ -82,5 +119,6 @@ if (failed) {
   process.exit(1);
 }
 console.log(
-  `OK: implementation ${impl}, spec ${spec}, protocol ${protocol}, credential ${credential}, ${toolCount} tools — ${checks.length} checks consistent`,
+  `OK: implementation ${impl}, spec ${spec}, protocol ${protocol}, credential ${credential}, ${toolCount} tools, ` +
+    `${eventTypes.size} audit events + ${emittedDetails.size} event_detail values documented — ${checks.length} version checks consistent`,
 );
