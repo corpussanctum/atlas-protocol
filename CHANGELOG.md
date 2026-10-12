@@ -4,6 +4,12 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-10-12
+
+Hardening from the first CodeQL pass: `config.json` is validated field by
+field, the Why Layer flags non-local plaintext endpoints, and audit events
+are cataloged and checked against the code in CI.
+
 ### Security
 - **`config.json` is now validated per field** (CodeQL `js/file-access-to-http`
   triage, #16). Previously `Object.assign` copied any JSON value into the live

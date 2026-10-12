@@ -16,7 +16,7 @@ These four identifiers are independent. Do not treat them as interchangeable.
 
 | Identifier | Current value | Meaning |
 |---|---|---|
-| **Implementation** | `1.0.3` | This repository / npm package / `atlas_status.version` |
+| **Implementation** | `1.0.4` | This repository / npm package / `atlas_status.version` |
 | **Spec document** | `1.0.1` | `SPEC.md` header |
 | **Protocol (wire)** | `0.8.4` | Delegation authority, `SESSION_START.meta.protocol_version`, Why Layer provenance |
 | **Credential schema** | `0.5.0` | `AgentCredential.version` |
