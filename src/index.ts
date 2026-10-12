@@ -50,7 +50,7 @@ import { ProximityMesh, loadProximityConfig, createHardwareAdapters, generateEph
 import type { ProximityMeshConfig, HardwareAdapterSet } from "./proximity/index.js";
 import { PROTOCOL_VERSION } from "./protocol-version.js";
 
-const VERSION = "1.0.3";
+const VERSION = "1.0.4";
 const SPEC_VERSION = "1.0.1";
 
 const VALID_ROLES: AgentRole[] = ["claude-code", "orchestrator", "tool-caller", "observer", "admin"];
