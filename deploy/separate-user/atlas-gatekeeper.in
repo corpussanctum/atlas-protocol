@@ -1,0 +1,13 @@
+#!/bin/sh
+# Atlas Protocol gatekeeper launcher (installed by deploy/separate-user/install.sh).
+# Runs as @ATLAS_USER@ via: sudo -n -u @ATLAS_USER@ @LIBEXEC@/atlas-gatekeeper
+# sudo resets the environment, so the agent's MCP config cannot inject settings;
+# they come from @ETC@/atlas.env, which the agent user cannot read.
+set -eu
+umask 077
+set -a
+. @ETC@/atlas.env
+set +a
+export ATLAS_DATA_DIR=@DATA@
+export HOME=@DATA@
+exec @NODE@ @PREFIX@/dist/index.js

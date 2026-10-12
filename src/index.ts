@@ -47,6 +47,7 @@ import { escapeHtml } from "./html.js";
 import { createPermissionPipeline } from "./authority/permission-pipeline.js";
 import { operatorPreviewPolicyFromEnv } from "./authority/operator-preview.js";
 import { AgentKeyStore } from "./signer-provider.js";
+import { checkIsolation } from "./isolation.js";
 
 
 /** Claude Code channel permission relay (non-spec notification). */
@@ -60,6 +61,15 @@ const PermissionRequestParams = z.object({
 
 async function main(): Promise<void> {
   const config = loadConfig();
+
+  // Separate-user isolation self-check (#23)
+  const isolation = checkIsolation({ dataDir: config.data_dir });
+  if (process.env.ATLAS_REQUIRE_ISOLATION === "true" && !isolation.isolated) {
+    console.error("[atlas] ATLAS_REQUIRE_ISOLATION=true but the gatekeeper is not isolated from the agent user:");
+    for (const p of isolation.problems) console.error(`[atlas]   - ${p}`);
+    console.error("[atlas] Refusing to start. See deploy/separate-user/README.md.");
+    process.exit(1);
+  }
   const identityProvider = createIdentityProvider(config.briefcase_path || undefined);
   const identityContext = identityProvider.getContext();
   const policyEngine = new PolicyEngine(config, identityContext);
@@ -272,6 +282,7 @@ async function main(): Promise<void> {
     baselineStore,
     breakGlass,
     identityAttach,
+    isolation,
     quietConfig,
     proximityConfig,
     getHardware,

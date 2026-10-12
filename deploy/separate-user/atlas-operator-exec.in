@@ -1,0 +1,11 @@
+#!/bin/sh
+# Runs atlas-operator as @ATLAS_USER@ with the gatekeeper's settings.
+# Invoked by /usr/local/bin/atlas-operator through sudo (the operator's own rights).
+set -eu
+umask 077
+set -a
+. @ETC@/atlas.env
+set +a
+export ATLAS_DATA_DIR=@DATA@
+export HOME=@DATA@
+exec @NODE@ @PREFIX@/dist/operator-cli.js "$@"

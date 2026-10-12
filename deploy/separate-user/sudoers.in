@@ -1,0 +1,5 @@
+# Atlas Protocol (installed by deploy/separate-user/install.sh).
+# The agent user may start the gatekeeper as @ATLAS_USER@, with no arguments,
+# and nothing else. "" forbids arguments. No pty: MCP uses plain stdio.
+Defaults!@LIBEXEC@/atlas-gatekeeper !use_pty, env_reset
+@AGENT_USER@ ALL=(@ATLAS_USER@) NOPASSWD: @LIBEXEC@/atlas-gatekeeper ""

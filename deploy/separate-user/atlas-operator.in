@@ -1,0 +1,4 @@
+#!/bin/sh
+# Operator commands against the separate-user gatekeeper. Needs the operator's
+# own sudo rights; the agent user's sudo rule does not cover this.
+exec sudo -u @ATLAS_USER@ @LIBEXEC@/atlas-operator-exec "$@"
