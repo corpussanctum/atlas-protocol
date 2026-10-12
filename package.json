@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "atlas-protocol": "dist/index.js"
+    "atlas-protocol": "dist/index.js",
+    "atlas-operator": "dist/operator-cli.js"
   },
   "scripts": {
     "build": "tsc",

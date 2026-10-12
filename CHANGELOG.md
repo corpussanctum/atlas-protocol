@@ -5,6 +5,29 @@ All notable changes to Atlas Protocol are documented in this file.
 ## [Unreleased]
 
 ### Security
+- **Break-glass now requires an operator signature (GHSA-4qq7-gm8p-g5vx).**
+  Before this change, a break-glass token was plain JSON in the data directory,
+  so any process that could write there, including the governed agent through
+  its own file tools, could create an active override that auto-approved every
+  "ask" for up to 4 hours. Separately, `atlas_break_glass_activate` skipped
+  confirmation when no Telegram token was configured, or when sending the
+  Telegram challenge failed.
+  - New `atlas-operator` CLI (`keygen`, `break-glass`, `status`, `revoke`).
+    The operator key is ML-DSA-65, with its secret half encrypted under an
+    operator passphrase (scrypt + AES-256-GCM). The passphrase is read only
+    from an interactive terminal.
+  - The gatekeeper verifies the token's signature, key identity, expiry, and
+    TTL limit from the signed fields. It pins the operator public key at
+    startup (optionally also via `ATLAS_OPERATOR_KEY_ID`), and tracks usage
+    outside the token file.
+  - `atlas_break_glass_activate` always refuses, audits
+    `BREAK_GLASS_ACTIVATION_REFUSED`, and alerts the operator.
+  - **Breaking:** existing unsigned tokens are ignored, and break-glass is
+    unavailable until the operator runs `atlas-operator keygen` and restarts.
+- SPEC 1.1.0: §9.2 now requires operator-signed activation, and Appendix H
+  documents the same-user agent threat. The README's earlier claim that
+  activation "falls back to console-only confirmation" was never implemented.
+
 - **Permission pipeline is now fail-closed on internal errors.** If the
   operator channel threw (e.g. Telegram unreachable), or the policy engine or
   audit logger raised, the request got no verdict at all. Now an operator

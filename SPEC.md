@@ -1,9 +1,9 @@
 # Atlas Protocol Specification
 
-**Version:** 1.0.1
+**Version:** 1.1.0
 **Status:** Published
 **Authors:** TJ Lane (Corpus Sanctum)
-**Last updated:** 2026-08-29
+**Last updated:** 2026-10-12
 
 This document defines the normative requirements for Atlas Protocol. It separates **what a conformant implementation MUST do** from **how the reference implementation happens to do it**. The reference implementation (this repository) uses Telegram, Ollama, and MCP as its transport and runtime, but those are binding choices of this implementation, not of the protocol.
 
@@ -581,9 +581,13 @@ Provides emergency override when the operator relay transport is unreachable.
 - Break-glass MUST only bypass "ask" verdicts. Hard-deny rules MUST NOT be bypassed.
 - Tokens MUST be time-limited (maximum 4 hours).
 - Tokens MUST be stored with restrictive file permissions (0600).
-- Activation SHOULD require operator confirmation via the relay transport, falling back to console-only confirmation when the transport is already down.
+- Activation MUST be authorized by the operator, not the governed agent. A token MUST carry a signature from an **operator key** whose secret half the gatekeeper does not hold in usable form (e.g. encrypted under an operator passphrase, or held in a hardware token).
+- The gatekeeper MUST verify the signature, the signing key's identity, and the expiry and TTL limit from the signed fields before honoring a token. Unsigned or invalid tokens MUST be treated as absent.
+- The gatekeeper MUST pin the operator public key for the lifetime of the process. Changes to stored key material MUST NOT take effect until restart.
+- Interfaces callable by the governed agent (e.g. MCP tools) MUST NOT be able to activate break-glass. Such requests SHOULD be audited and reported to the operator.
+- Confirmation through a channel the agent can drive (e.g. a code written to a file the agent can read) MUST NOT be accepted as operator authorization.
 - All break-glass approvals MUST be logged in the audit trail.
-- Implementations MAY support request count limits on tokens.
+- Implementations MAY support request count limits on tokens. Usage counts SHOULD be tracked by the gatekeeper rather than in agent-writable token state.
 
 ## 10. Quiet mode
 
@@ -653,7 +657,7 @@ Atlas uses four distinct version identifiers:
 
 | Identifier | Current value | Meaning | Where it appears |
 |---|---|---|---|
-| **Spec document version** | `"1.0.1"` | The version of this specification document. Changes with each published revision of the spec. | Header of this document |
+| **Spec document version** | `"1.1.0"` | The version of this specification document. Changes with each published revision of the spec. | Header of this document |
 | **Implementation version** | `"1.0.4"` | The reference implementation (this repository). Independent of spec and protocol versions. | `package.json`, plugin manifests, `atlas_status.version`, `SESSION_START` → `meta.version` |
 | **Credential schema version** | `"0.5.0"` | Structure of `AgentCredential` objects. Changes when fields are added/removed from the credential type. | Credential `version` field |
 | **Protocol version** | `"0.8.4"` | The wire-format protocol version governing pipeline behavior, audit format, delegation semantics, and conformance requirements. Incremented as protocol behavior changes, independent of the spec document version. | `SESSION_START` → `meta.protocol_version`, delegation authority → `version`, `ModelProvenance.protocolVersion` |
@@ -1140,6 +1144,7 @@ Atlas Protocol improves auditability and operator oversight for autonomous AI ag
 | Threat | Atlas posture | Residual risk |
 |---|---|---|
 | **Host compromise** | Atlas cannot protect against a compromised host. If an attacker has root access, they can read signing keys, forge audit entries, and bypass all controls. | Mitigate with host hardening, HSM key storage (future), and external audit anchoring. |
+| **Governed agent with same-user filesystem access** | When the agent runs as the same OS user as the gatekeeper, it can read and modify the gatekeeper's state: audit log, registry, issuer key, and stored operator public key. Break-glass tokens require an operator signature, and the operator key is pinned at startup, so the agent can't forge an override mid-session. | Tampering takes effect on restart, and audit/registry integrity depends on signatures the agent may be able to reach. Run gatekeeper state under a separate OS user (or HSM) the agent can't access. |
 | **Malicious local operator** | Atlas trusts the operator. A malicious operator can approve any request, forge break-glass tokens, and suppress alerts. | Atlas is operator-oversight, not operator-proof. Separation of duties requires organizational controls. |
 | **Compromised inference runtime** | If the Ollama instance (or equivalent) is compromised, the Why Layer produces unreliable assessments. | The Why Layer is non-gating by design. It informs but does not decide. Compromised assessments affect narration quality, not permission decisions. |
 | **Bad rulesets** | The policy engine enforces rules as written. A misconfigured ruleset with missing deny patterns allows dangerous commands through. | Use `atlas_test_policy` regression testing after every rule change. The reference ruleset covers 97 rules across 13 attack categories. |

@@ -23,7 +23,7 @@ CI enforces that this file matches the code in both directions (`npm run check:v
 
 | Event | Emitted when |
 |---|---|
-| `SESSION_START` | The server starts; records implementation, protocol, and spec versions plus the signer's public-key hash |
+| `SESSION_START` | The server starts; records implementation, protocol, and spec versions, the signer's public-key hash, and the pinned `operator_key_id` |
 | `CONFIG_LOADED` | Configuration was loaded at startup (`rejected_config_fields` lists `config.json` fields that failed validation). Also used for several administrative actions; see `event_detail` below |
 | `IDENTITY_LOADED` | A DIB Briefcase identity context was loaded |
 | `CHECKPOINT` | Periodic signed checkpoint over the hash chain (emitted automatically by the audit logger) |
@@ -63,7 +63,7 @@ Some administrative actions are recorded under a general event type, with the sp
 | `CASCADE_REVOCATION` | `CONFIG_LOADED` | `atlas_identity_cascade_revoke` revoked a parent and its descendants |
 | `BOOTSTRAP_CONFIRM_SKIPPED` | `CONFIG_LOADED` | Two-channel bootstrap confirmation was bypassed by environment variable |
 | `BOOTSTRAP_CONFIRMATION_TIMEOUT` | `POLICY_DENY` | The bootstrap confirmation code was not returned in time |
-| `BREAK_GLASS_ACTIVATED` | `CONFIG_LOADED` | Emergency Telegram bypass activated |
+| `BREAK_GLASS_ACTIVATION_REFUSED` | `CONFIG_LOADED` | The agent called `atlas_break_glass_activate`; refused (only the operator can activate, via `atlas-operator`). Break-glass approvals themselves are `POLICY_ALLOW` entries with `meta.break_glass: true` |
 | `BREAK_GLASS_REVOKED` | `CONFIG_LOADED` | Emergency bypass revoked |
 | `AUDIT_LOG_ROTATED` | `CONFIG_LOADED` | The audit log was rotated into an archive |
 | `KEY_ROTATION_COMPLETE` | `SESSION_START` | First entry signed by the new issuer key after rotation |
