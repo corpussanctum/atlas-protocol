@@ -66,7 +66,18 @@ export function handlers(ctx: ToolContext): Record<string, ToolHandler> {
       const lines = [
         result.valid ? "✅ Audit log integrity verified." : "❌ Audit log integrity FAILED:",
       ];
+      if (!result.valid && result.errors.length === 0) {
+        lines.push("No tamper indicators: every link resolves and every signature verifies. The failure is concurrent-writer forks only.");
+      }
       if (!result.valid) lines.push(...result.errors);
+      if (result.forks.length > 0) {
+        lines.push(
+          "",
+          `⚠️ ${result.forks.length} concurrent-writer fork(s): two server instances extended the chain from the same head.`,
+          "Signed and not tampering, but the tail of each forked branch is not truncation-protected by the chain alone.",
+          ...result.forks,
+        );
+      }
       lines.push("", `Entries: ${result.stats.total_entries}`);
       lines.push(`ML-DSA-65 signed: ${result.stats.pq_signed}`);
       lines.push(`HMAC signed: ${result.stats.hmac_signed}`);

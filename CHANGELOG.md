@@ -15,6 +15,17 @@ All notable changes to Atlas Protocol are documented in this file.
   a v1-era client (as Claude Code uses); a new test covers the v2 client.
 
 ### Fixed
+- **Audit chain forks from concurrent server instances** (#30). Each Claude
+  Code session runs its own Atlas server, all appending to one log, and
+  `AuditLogger` read the chain head only at startup. Overlapping sessions
+  wrote entries with duplicate `seq` that chained to a stale predecessor.
+  Appends now hold an O_EXCL lockfile (`audit.jsonl.lock`, stale after 5 s)
+  and re-read the chain head when the file changed since this instance last
+  touched it. `verify()` now returns `forks`: an entry chaining to an earlier,
+  non-adjacent line with `seq = parent + 1` is labeled a concurrent-writer
+  fork instead of a generic "chain broken". Forks still fail verification
+  (SPEC §6.2.1). Duplicate entry ids are now reported as replays.
+  SPEC §6.2.1 now requires serialized appends instead of a single writer process.
 - `atlas_proximity_disconnect` reported "Session … closed." for IDs that
   were never active; it now returns `isError` with "not found" (#26).
 - Docs claimed 97 policy rules (90 deny) and "120+" fixtures. The default set

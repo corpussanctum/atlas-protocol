@@ -8,11 +8,11 @@
 
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, renameSync, rmSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash, createHmac } from "node:crypto";
-import { AuditLogger } from "../src/audit-log.js";
+import { AuditLogger, breakStaleLock } from "../src/audit-log.js";
 import { QuantumSigner } from "../src/quantum-signer.js";
 import type { AtlasConfig } from "../src/config.js";
 
@@ -747,5 +747,115 @@ describe("AuditLogger — field redaction", () => {
 
     const result = logger.verify();
     assert.equal(result.valid, true, `Errors: ${result.errors.join(", ")}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Concurrent writers (#30)
+// ---------------------------------------------------------------------------
+
+describe("AuditLogger — concurrent server instances", () => {
+  it("two instances on one log keep a single contiguous chain", () => {
+    const config = makeConfig({ audit_hmac_secret: "concurrent" });
+    const a = new AuditLogger(config);
+    a.log("SESSION_START");
+    const b = new AuditLogger(config);
+    b.log("SESSION_START");
+    b.log("CONFIG_LOADED");
+    a.log("CREDENTIAL_EXPIRED"); // stale before the fix: reused seq 1
+    b.log("CHANNEL_MESSAGE");
+
+    const entries = readFileSync(config.audit_log_path, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(entries.map((e) => e.seq), [0, 1, 2, 3, 4]);
+    const result = a.verify();
+    assert.equal(result.valid, true, `Errors: ${result.errors.join(", ")}`);
+    assert.deepEqual(result.forks, []);
+  });
+
+  it("labels a pre-fix fork distinctly from tampering, and still fails it", () => {
+    const config = makeConfig({ audit_hmac_secret: "fork" });
+    const a = new AuditLogger(config);
+    a.log("SESSION_START");
+    const [root] = readFileSync(config.audit_log_path, "utf-8").trim().split("\n");
+    a.log("CONFIG_LOADED");
+
+    // A second writer that saw only the root, as an unlocked instance would
+    const other = makeConfig({ audit_hmac_secret: "fork" });
+    writeFileSync(other.audit_log_path, root + "\n", "utf-8");
+    new AuditLogger(other).log("CREDENTIAL_EXPIRED");
+    const forked = readFileSync(other.audit_log_path, "utf-8").trim().split("\n")[1];
+    writeFileSync(config.audit_log_path, readFileSync(config.audit_log_path, "utf-8") + forked + "\n");
+
+    const result = a.verify();
+    assert.equal(result.valid, false);
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.stats.forks, 1);
+    assert.match(result.forks[0], /^Line 3: concurrent-writer fork — seq 1 chains to line 1/);
+  });
+
+  it("rejects a replayed entry that would otherwise look like a fork", () => {
+    const config = makeConfig({ audit_hmac_secret: "replay" });
+    const logger = new AuditLogger(config);
+    logger.log("SESSION_START");
+    logger.log("CONFIG_LOADED");
+    logger.log("CHANNEL_MESSAGE");
+    const lines = readFileSync(config.audit_log_path, "utf-8").trim().split("\n");
+    writeFileSync(config.audit_log_path, [...lines, lines[1]].join("\n") + "\n");
+
+    const result = logger.verify();
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((e) => e.includes("duplicate entry id")));
+  });
+
+  it("breaks a stale lock left by a dead instance", () => {
+    const config = makeConfig();
+    const lockPath = `${config.audit_log_path}.lock`;
+    writeFileSync(lockPath, "99999");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lockPath, old, old);
+
+    const logger = new AuditLogger(config);
+    logger.log("SESSION_START");
+    assert.equal(existsSync(lockPath), false);
+    assert.equal(logger.verify().stats.total_entries, 1);
+  });
+
+  it("keeps the chain anchor after the log is rotated away", () => {
+    const config = makeConfig();
+    const logger = new AuditLogger(config);
+    logger.log("SESSION_START");
+    const last = readFileSync(config.audit_log_path, "utf-8").trim();
+    renameSync(config.audit_log_path, `${config.audit_log_path}.1`);
+
+    const entry = logger.log("CONFIG_LOADED");
+    assert.equal(entry.prev_hash, sha3_256(last));
+    assert.equal(entry.seq, 1);
+  });
+});
+
+describe("AuditLogger — lock and tail edge cases", () => {
+  it("breaking a stale lock never removes a fresh one that replaced it", () => {
+    const config = makeConfig();
+    const lockPath = `${config.audit_log_path}.lock`;
+    // The stale lock, and the fresh one another waiter took after breaking it.
+    // Both exist at once, so their inodes differ.
+    writeFileSync(lockPath, "stale");
+    writeFileSync(`${lockPath}.new`, "fresh");
+    const staleIno = statSync(lockPath).ino;
+    const freshIno = statSync(`${lockPath}.new`).ino;
+    renameSync(`${lockPath}.new`, lockPath);
+
+    breakStaleLock(lockPath, staleIno);
+    assert.equal(statSync(lockPath).ino, freshIno);
+  });
+
+  it("resyncs from a last line longer than the tail window", () => {
+    const config = makeConfig();
+    const a = new AuditLogger(config);
+    const b = new AuditLogger(config);
+    b.log("CONFIG_LOADED", { meta: { blob: "x".repeat(100 * 1024) } });
+    const entry = a.log("SESSION_START");
+    assert.equal(entry.seq, 1);
+    assert.equal(a.verify().valid, true);
   });
 });
