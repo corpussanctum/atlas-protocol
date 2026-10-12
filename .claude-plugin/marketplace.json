@@ -13,7 +13,7 @@
   "plugins": [
     {
       "name": "atlas-gatekeeper",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "description": "Fail-closed agent governance: 97-rule policy engine, ML-DSA-65 signed audit trails, identity attestation, credential delegation, issuer key rotation, behavioral drift detection, and Telegram operator relay.",
       "source": {
         "type": "github",
@@ -25,7 +25,7 @@
     },
     {
       "name": "atlas-proximity-mesh",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "description": "Research/demo close-proximity agent swarms: UWB ranging, BLE discovery, X25519 encrypted channels, ML-DSA-65 proximity proofs. Hardware adapters are untested reference drivers; mock drivers included for development.",
       "source": {
         "type": "github",
