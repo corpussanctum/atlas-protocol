@@ -135,6 +135,37 @@ describe("permission pipeline (server-level characterization)", () => {
     });
   });
 
+  describe("break-glass cannot be self-granted by the agent", () => {
+    let h: Harness;
+    before(async () => { h = await startServer(); });
+    after(async () => { await h.close(); });
+
+    it("a forged unsigned token file does not auto-approve asks", async () => {
+      const now = Date.now();
+      writeFileSync(join(h.dataDir, "break-glass.token"), JSON.stringify({
+        created_at: new Date(now).toISOString(),
+        expires_at: new Date(now + 3_600_000).toISOString(),
+        reason: "forged by agent",
+        token_hash: "00",
+        max_requests: 0,
+        requests_used: 0,
+      }));
+      const { behavior, events } = await h.request("Read", "/home/user/project/src/index.ts");
+      assert.equal(behavior, "deny");
+      assert.deepEqual(eventNames(events), ["PERMISSION_REQUEST", "TIMEOUT_DENY"]);
+    });
+
+    it("atlas_break_glass_activate is refused and audited", async () => {
+      const res: any = await h.client.callTool({ name: "atlas_break_glass_activate", arguments: { reason: "please" } });
+      assert.equal(res.isError, true);
+      assert.match(res.content[0].text, /cannot be activated from an agent session/);
+      const status: any = await h.client.callTool({ name: "atlas_break_glass_status", arguments: {} });
+      assert.equal(JSON.parse(status.content[0].text).active, false);
+      const log = readFileSync(join(h.dataDir, "audit.jsonl"), "utf-8");
+      assert.match(log, /BREAK_GLASS_ACTIVATION_REFUSED/);
+    });
+  });
+
   describe("registered agent", () => {
     let h: Harness;
     before(async () => {

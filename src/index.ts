@@ -44,6 +44,8 @@ import { ingestEntry as baselineIngestEntry, ingestAssessment as baselineIngestA
 import type { DriftAssessment } from "./baseline-types.js";
 import { runPolicyTests } from "./policy-test-runner.js";
 import { BreakGlassManager } from "./break-glass.js";
+import { readOperatorPublicKey } from "./operator-key.js";
+import type { OperatorPublicKey } from "./operator-key.js";
 import { AuditRotationManager } from "./audit-rotation.js";
 import { loadQuietConfig } from "./quiet-mode.js";
 import { ProximityMesh, loadProximityConfig, createHardwareAdapters, generateEphemeralKeypair } from "./proximity/index.js";
@@ -53,7 +55,7 @@ import { escapeHtml } from "./html.js";
 import { createPermissionPipeline } from "./authority/permission-pipeline.js";
 
 const VERSION = "1.0.4";
-const SPEC_VERSION = "1.0.1";
+const SPEC_VERSION = "1.1.0";
 
 const VALID_ROLES: AgentRole[] = ["claude-code", "orchestrator", "tool-caller", "observer", "admin"];
 const VALID_CAPABILITIES: AgentCapability[] = [
@@ -123,7 +125,24 @@ async function main(): Promise<void> {
   const baselineStore = new BaselineStore(config.data_dir);
 
   // Break-glass manager
-  const breakGlass = new BreakGlassManager(config.data_dir);
+  // Operator public key: pinned for the life of this process (SPEC §9).
+  // Optionally also pinned by key ID from the launch environment.
+  let operatorKey: OperatorPublicKey | null = null;
+  let operatorKeyError: string | undefined;
+  try {
+    operatorKey = readOperatorPublicKey(config.data_dir);
+    const pinnedId = process.env.ATLAS_OPERATOR_KEY_ID?.trim();
+    if (operatorKey && pinnedId && operatorKey.key_id !== pinnedId) {
+      operatorKeyError = `operator key ${operatorKey.key_id} does not match ATLAS_OPERATOR_KEY_ID ${pinnedId}`;
+      operatorKey = null;
+    }
+  } catch (err) {
+    operatorKeyError = err instanceof Error ? err.message : String(err);
+  }
+  if (operatorKeyError) {
+    console.error(`[atlas] Warning: break-glass disabled: ${operatorKeyError}`);
+  }
+  const breakGlass = await BreakGlassManager.open(config.data_dir, operatorKey);
 
   // Quiet mode
   const quietConfig = loadQuietConfig();
@@ -210,6 +229,8 @@ async function main(): Promise<void> {
       pq_signing: signer.available,
       pq_algorithm: signer.available ? "ML-DSA-65" : null,
       pq_public_key_hash: signer.getPublicKeyHash(),
+      operator_key_id: operatorKey?.key_id ?? null,
+      ...(operatorKeyError ? { operator_key_error: operatorKeyError } : {}),
       data_dir: config.data_dir,
       identity_loaded: identityContext.loaded,
       identity_principal: identityContext.principal_label || null,
@@ -482,8 +503,8 @@ async function main(): Promise<void> {
       {
         name: "atlas_break_glass_activate",
         description:
-          "Activate a break-glass emergency override. Bypasses Telegram for 'ask' verdicts (hard-deny rules are NEVER bypassed). " +
-          "Requires operator confirmation via Telegram. Use only when Telegram is expected to become unreachable.",
+          "Request a break-glass emergency override. Always refused from an agent session and reported to the operator: " +
+          "only the operator can activate break-glass, via `atlas-operator break-glass` on the host (operator-key signed).",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -1176,109 +1197,33 @@ async function main(): Promise<void> {
       }
 
       case "atlas_break_glass_activate": {
-        const bgReason = args?.reason as string;
-        const bgTtl = typeof args?.ttl_minutes === "number" ? args.ttl_minutes : 60;
-        const bgMaxReq = typeof args?.max_requests === "number" ? args.max_requests : 0;
-
-        if (!bgReason) {
-          return { content: [{ type: "text" as const, text: "Error: reason is required" }], isError: true };
-        }
-
-        // Require Telegram confirmation before activating (if Telegram is available).
-        // Same two-channel pattern as bootstrap: code goes to host (stderr +
-        // file), challenge goes to Telegram, operator must reply with the code.
-        if (config.telegram_bot_token) {
-          const bgConfirmCode = randomBytes(3).toString("hex").toUpperCase();
-          const bgCodeFileName = "break-glass-code.txt";
-          const bgCodeFilePath = writeConfirmCodeFile(config.data_dir, bgCodeFileName, bgConfirmCode);
-
-          console.error("");
-          console.error(`[atlas] BREAK-GLASS ACTIVATION CODE: ${bgConfirmCode}`);
-          console.error(`[atlas] Code also written to: ${bgCodeFilePath} (mode 0600, single-use)`);
-          console.error(`[atlas] Send this code via Telegram to confirm (120s timeout).`);
-          console.error("");
-
-          try {
-            await telegram.sendReply(
-              `⚠️ <b>BREAK-GLASS ACTIVATION REQUEST</b>\n\n` +
-              `Reason: ${escapeHtml(bgReason)}\n` +
-              `TTL: ${bgTtl} minutes\n` +
-              `Max requests: ${bgMaxReq || "unlimited"}\n\n` +
-              `Reply with the 6-character code from the server console ` +
-              `<b>or</b> read it from <code>${escapeHtml(bgCodeFilePath)}</code>.`,
-              { broadcast: true }
-            );
-
-            const bgConfirmed = await new Promise<boolean>((resolve) => {
-              const timer = setTimeout(() => { bgCleanup(); resolve(false); }, 120_000);
-              const handler = (msg: import("./telegram.js").IncomingMessage) => {
-                if (msg.text.trim().toUpperCase() === bgConfirmCode) {
-                  bgCleanup(); resolve(true);
-                }
-              };
-              function bgCleanup() {
-                clearTimeout(timer);
-                const idx = (telegram as any).messageHandlers?.indexOf(handler) ?? -1;
-                if (idx >= 0) (telegram as any).messageHandlers.splice(idx, 1);
-              }
-              telegram.onMessage(handler);
-            });
-
-            // Single-use: always clear the code file after the wait completes
-            clearConfirmCodeFile(config.data_dir, bgCodeFileName);
-
-            if (!bgConfirmed) {
-              return { content: [{ type: "text" as const, text: "Error: break-glass activation not confirmed. Code not matched within 120 seconds." }], isError: true };
-            }
-          } catch {
-            // Telegram send failed — this is the exact scenario break-glass is for.
-            // Allow activation without Telegram confirmation if Telegram is down.
-            clearConfirmCodeFile(config.data_dir, bgCodeFileName);
-            console.error("[atlas] Telegram unreachable — activating break-glass without Telegram confirmation.");
-          }
-        }
-
-        const { token, secret } = breakGlass.create(bgReason, bgTtl, bgMaxReq);
-
-        console.error("");
-        console.error("╔══════════════════════════════════════════════════════╗");
-        console.error("║  BREAK-GLASS TOKEN ACTIVATED                        ║");
-        console.error(`║  Expires: ${token.expires_at}        ║`);
-        console.error(`║  Reason: ${bgReason.slice(0, 44).padEnd(44)}║`);
-        console.error("╚══════════════════════════════════════════════════════╝");
-        console.error("");
-
+        // Break-glass bypasses the human step, so the governed agent (which can
+        // call MCP tools) must not be able to authorize it. Only the operator,
+        // holding the operator key passphrase, can issue a token (SPEC §9).
         audit.log("CONFIG_LOADED", {
           meta: {
-            event_detail: "BREAK_GLASS_ACTIVATED",
-            reason: bgReason,
-            expires_at: token.expires_at,
-            ttl_minutes: bgTtl,
-            max_requests: bgMaxReq,
-            token_hash: token.token_hash.slice(0, 16) + "...",
+            event_detail: "BREAK_GLASS_ACTIVATION_REFUSED",
+            requested_reason: typeof args?.reason === "string" ? args.reason.slice(0, 200) : null,
+            session_agent_id: sessionAgentId ?? null,
           },
         });
-
         await telegram.sendReply(
-          `🔓 <b>BREAK-GLASS ACTIVATED</b>\n` +
-          `Reason: ${escapeHtml(bgReason)}\n` +
-          `Expires: ${escapeHtml(token.expires_at)}\n` +
-          `Ask verdicts will be auto-approved. Hard-deny rules remain enforced.`,
+          `⚠️ <b>BREAK-GLASS REQUESTED BY AGENT</b> (refused)\n` +
+          `Reason given: ${escapeHtml(typeof args?.reason === "string" ? args.reason.slice(0, 200) : "(none)")}\n` +
+          `Only the operator can activate break-glass: <code>atlas-operator break-glass --reason "…"</code>`,
           { broadcast: true }
         ).catch(() => {});
-
         return {
           content: [{
             type: "text" as const,
-            text: JSON.stringify({
-              activated: true,
-              expires_at: token.expires_at,
-              reason: bgReason,
-              ttl_minutes: bgTtl,
-              max_requests: bgMaxReq,
-              note: "Hard-deny rules are NEVER bypassed. Only 'ask' verdicts are auto-approved.",
-            }, null, 2),
+            text:
+              "Break-glass cannot be activated from an agent session. The operator must run " +
+              "`atlas-operator break-glass --reason \"…\"` on the host (requires the operator key passphrase). " +
+              (breakGlass.operatorKeyId
+                ? `Operator key: ${breakGlass.operatorKeyId}.`
+                : "No operator key is configured; the operator must first run `atlas-operator keygen`."),
           }],
+          isError: true,
         };
       }
 

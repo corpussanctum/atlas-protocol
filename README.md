@@ -17,7 +17,7 @@ These four identifiers are independent. Do not treat them as interchangeable.
 | Identifier | Current value | Meaning |
 |---|---|---|
 | **Implementation** | `1.0.4` | This repository / npm package / `atlas_status.version` |
-| **Spec document** | `1.0.1` | `SPEC.md` header |
+| **Spec document** | `1.1.0` | `SPEC.md` header |
 | **Protocol (wire)** | `0.8.4` | Delegation authority, `SESSION_START.meta.protocol_version`, Why Layer provenance |
 | **Credential schema** | `0.5.0` | `AgentCredential.version` |
 
@@ -228,26 +228,32 @@ npm test
 
 ## Break-glass mechanism
 
-When Telegram is unreachable or expected to become unavailable, operators can activate a break-glass token that auto-approves "ask" verdicts without Telegram. This addresses the Telegram single-point-of-failure concern.
+When Telegram is unreachable, the **operator** can activate a break-glass token that auto-approves "ask" verdicts without Telegram. This addresses the Telegram single-point-of-failure concern.
+
+Break-glass bypasses the human step, so the governed agent must not be able to grant it to itself. Since 1.0.5, tokens must be signed with an **operator key**: an ML-DSA-65 keypair whose secret half is encrypted with a passphrase only the operator knows. The agent can call MCP tools and write files, but it can't produce a valid signature.
 
 **Security properties:**
 - Hard-deny rules are **never** bypassed — only "ask" verdicts
-- Token is time-limited (default: 1 hour, max: 4 hours)
-- Activation requires Telegram confirmation (or falls back to console-only when Telegram is already down)
-- Optional `max_requests` limit to cap auto-approved requests
-- All break-glass actions are prominently logged in the audit trail
-- Token stored at `<data_dir>/break-glass.token` (mode 0600)
+- Tokens are signed by the operator key; unsigned, edited, or foreign-key tokens are rejected
+- The operator public key is pinned in memory when Atlas starts (optionally also by `ATLAS_OPERATOR_KEY_ID`), so replacing the key file mid-session has no effect
+- `atlas_break_glass_activate` (MCP) **always refuses**, audits the attempt, and alerts the operator
+- Time-limited (default 1 hour, max 4 hours, enforced from the signed fields)
+- Optional `--max-requests` cap; usage is tracked by the gatekeeper, not in the token file
+- Every break-glass approval is logged (`POLICY_ALLOW` with `meta.break_glass: true`)
 
 ```
-# Activate via MCP tool:
-atlas_break_glass_activate(reason: "Telegram API outage", ttl_minutes: 60)
+# One-time setup (operator, at an interactive terminal), then restart Atlas:
+atlas-operator keygen
 
-# Check status:
-atlas_break_glass_status()
+# During an outage:
+atlas-operator break-glass --reason "Telegram API outage" --ttl 60 [--max-requests 20]
 
-# Revoke early:
-atlas_break_glass_revoke()
+# Check / end early (also available as atlas_break_glass_status / atlas_break_glass_revoke):
+atlas-operator status
+atlas-operator revoke
 ```
+
+Keep the encrypted operator key off-host if you can (`--key-file` on removable media). See the limitations section for what a same-user agent can still do.
 
 ## Quiet mode
 
@@ -370,7 +376,7 @@ Atlas exposes 26 MCP tools to the Claude Code session:
 
 | Tool | Description |
 |---|---|
-| `atlas_break_glass_activate` | Activate emergency Telegram bypass (time-limited, ask-only) |
+| `atlas_break_glass_activate` | Always refused from an agent session (audited, operator alerted); the operator activates via `atlas-operator break-glass` |
 | `atlas_break_glass_status` | Check break-glass token status |
 | `atlas_break_glass_revoke` | Revoke break-glass token, restore normal flow |
 
@@ -494,7 +500,9 @@ src/
 ├── baseline-types.ts      # Behavioral profile types, drift signals, maturity model
 ├── baseline-store.ts      # Per-agent JSON file persistence (atomic writes)
 ├── baseline-engine.ts     # Profile calculation, drift detection, ingestion
-├── break-glass.ts         # Emergency Telegram bypass (time-limited tokens)
+├── break-glass.ts         # Emergency Telegram bypass (operator-signed, time-limited tokens)
+├── operator-key.ts        # Operator ML-DSA-65 key (passphrase-encrypted) for break-glass
+├── operator-cli.ts        # atlas-operator CLI (keygen, break-glass, status, revoke)
 ├── quiet-mode.ts          # Auto-approve low-risk actions for mature agents
 ├── mitre-attack.ts        # ATT&CK technique → name + tactic lookup (65+ entries)
 ├── identity-provider.ts   # DIB Briefcase integration (consent tiers)
@@ -592,7 +600,8 @@ cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 ## Limitations
 
 - This is a security tool, not a compliance certification. It does not replace local review of high-risk actions, legal counsel, or organizational security policy.
-- The Telegram relay depends on Telegram's availability. The **break-glass mechanism** provides an emergency bypass when Telegram is unreachable (auto-deny remains the default without it).
+- The Telegram relay depends on Telegram's availability. The **break-glass mechanism** provides an operator-signed emergency bypass when Telegram is unreachable (auto-deny remains the default without it).
+- **A governed agent that runs as the same OS user as Atlas can read and modify Atlas's data directory**: the audit log, the credential registry, the issuer signing key, and the operator public key file. Pinning and signatures limit what it can achieve mid-session, but they don't replace OS-level separation. For strong guarantees, run Atlas's state under a separate OS user the agent can't write to.
 - The policy engine uses glob patterns and string matching, not semantic analysis. Known false positives exist (e.g., `TRUNCATE` matching the `ncat` network tool pattern). Defense in depth applies.
 - The Why Layer requires a running Ollama instance. Without it, the layer returns nominal stubs — it never blocks the gatekeeper.
 - Behavioral baselines need ~10 sessions before drift detection produces meaningful signals (maturity model handles this).
