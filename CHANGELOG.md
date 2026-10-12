@@ -4,6 +4,13 @@ All notable changes to Atlas Protocol are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-10-12
+
+Security release: break-glass can only be activated by the operator
+(operator-signed tokens), and the permission pipeline fails closed on
+internal errors. **Action required** to keep using break-glass: run
+`atlas-operator keygen` and restart Atlas.
+
 ### Security
 - **Break-glass now requires an operator signature (GHSA-4qq7-gm8p-g5vx).**
   Before this change, a break-glass token was plain JSON in the data directory,

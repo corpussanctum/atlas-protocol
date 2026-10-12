@@ -54,7 +54,7 @@ import { PROTOCOL_VERSION } from "./protocol-version.js";
 import { escapeHtml } from "./html.js";
 import { createPermissionPipeline } from "./authority/permission-pipeline.js";
 
-const VERSION = "1.0.4";
+const VERSION = "1.0.5";
 const SPEC_VERSION = "1.1.0";
 
 const VALID_ROLES: AgentRole[] = ["claude-code", "orchestrator", "tool-caller", "observer", "admin"];
