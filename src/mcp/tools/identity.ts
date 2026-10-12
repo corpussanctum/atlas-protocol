@@ -357,7 +357,9 @@ export function handlers(ctx: ToolContext): Record<string, ToolHandler> {
             attached: true,
             ...sanitizeCredential(credential),
             ...credentialTimeRemaining(credential.expiresAt),
-            note: "Delegation from this credential needs its secret key, which is not restored after a restart (#4).",
+            ...(registry.getAgentSigner(credential.agentId)
+              ? {}
+              : { note: "This credential's key is not in the keystore, so it cannot delegate. Keys survive restarts only when they were created with ATLAS_KEYSTORE_PASSPHRASE set (#4)." }),
           }, null, 2),
         }],
       };

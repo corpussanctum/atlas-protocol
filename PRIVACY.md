@@ -18,6 +18,7 @@ Atlas Protocol is a **local-first security tool**. It processes:
 | Permission requests + verdicts | **Telegram** (operator relay) | Human-in-the-loop approval |
 | Audit log entries | **Local filesystem** only | Tamper-evident audit trail |
 | Agent credentials | **Local filesystem** only | Identity registry |
+| Agent signing keys | **Memory**, or **local filesystem** encrypted (with `ATLAS_KEYSTORE_PASSPHRASE`) | Delegation |
 | Behavioral baselines | **Local filesystem** only | Drift detection |
 | Why Layer prompts | **Ollama** (local or configured endpoint) | Anomaly assessment |
 | Proximity proofs | **Local filesystem** + **peer device** (mesh sessions) | Proximity attestation |
@@ -31,6 +32,7 @@ Atlas does **not** send data to Anthropic, Corpus Sanctum, or any third-party an
 
 - **Audit logs** are retained locally until manually deleted or rotated (configurable via `ATLAS_AUDIT_MAX_ARCHIVES`)
 - **Identity credentials** persist in the data directory until revoked or expired
+- **Agent signing keys** are held in memory, or with `ATLAS_KEYSTORE_PASSPHRASE` set, stored encrypted under `agent-keys/` until the credential is revoked
 - **Behavioral baselines** persist indefinitely in the data directory
 - **Proximity session data** is held in memory only and discarded when sessions close
 

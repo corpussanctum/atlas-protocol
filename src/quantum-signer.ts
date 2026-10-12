@@ -24,6 +24,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { keyIdFor } from "./operator-key.js";
+import type { SignerProvider } from "./signer-provider.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -363,6 +365,26 @@ export class QuantumSigner {
    */
   getPublicKeyRaw(): Uint8Array | null {
     return this.publicKey;
+  }
+
+  /**
+   * The issuer key as a SignerProvider (#4), for credential issuance. It signs
+   * with whichever key is current, so it stays valid across rotation.
+   * Null when signing is unavailable.
+   */
+  asSignerProvider(): SignerProvider | null {
+    if (!this._available || !this.ml_dsa65 || !this.secretKey || !this.publicKey) return null;
+    const self = this;
+    return {
+      get id() { return self.publicKey ? keyIdFor(self.publicKey) : ""; },
+      algorithm: "ML-DSA-65",
+      capabilities: { durable: true },
+      publicKey: () => Uint8Array.from(self.publicKey ?? []),
+      sign(message: Uint8Array): Uint8Array {
+        if (!self.ml_dsa65 || !self.secretKey) throw new Error("Issuer key unavailable");
+        return self.ml_dsa65.sign(self.secretKey, message);
+      },
+    };
   }
 
   /**

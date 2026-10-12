@@ -9,12 +9,15 @@
  *   - Storage: <data_dir>/identity-registry.json (chmod 600)
  *   - Auto-save after every mutation (register, revoke)
  *   - Auto-load on initialization if file exists
- *   - Secret keys (agent private keys) are NEVER stored in the registry
+ *   - Secret keys (agent private keys) are NEVER stored in the registry;
+ *     they are held by the AgentKeyStore (src/signer-provider.ts), which
+ *     wraps them at rest when ATLAS_KEYSTORE_PASSPHRASE is set (#4)
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import type { QuantumSigner } from "./quantum-signer.js";
+import { AgentKeyStore, type SignerProvider } from "./signer-provider.js";
 import {
   initAgentIdentity,
   issueCredential,
@@ -29,6 +32,7 @@ import {
   reissueCredential,
 } from "./agent-identity.js";
 import type {
+  SigningKey,
   AgentCredential,
   CredentialIssueRequest,
   CredentialVerifyResult,
@@ -44,26 +48,30 @@ export class IdentityRegistry {
   private credentials: Map<string, AgentCredential> = new Map();
   /** Parent → children index for efficient delegation tree walks */
   private childrenIndex: Map<string, string[]> = new Map();
-  /** Agent secret keys (in-memory only, never persisted) */
-  private agentSecretKeys: Map<string, Uint8Array> = new Map();
   private readonly storagePath: string;
   private readonly signer: QuantumSigner;
-  private issuerSecretKey: Uint8Array | null = null;
+  private issuerSigner: SignerProvider | null = null;
   private issuerPublicKey: Uint8Array | null = null;
   private _initialized = false;
 
-  private constructor(dataDir: string, signer: QuantumSigner) {
+  private constructor(dataDir: string, signer: QuantumSigner, private readonly keys: AgentKeyStore) {
     this.storagePath = join(dataDir, "identity-registry.json");
     this.signer = signer;
   }
 
   /**
-   * Factory: create and initialize the registry.
+   * Factory: create and initialize the registry. Without a keystore, agent
+   * keys are held in memory only (lost on restart).
    */
-  static async create(dataDir: string, signer: QuantumSigner): Promise<IdentityRegistry> {
-    const registry = new IdentityRegistry(dataDir, signer);
+  static async create(dataDir: string, signer: QuantumSigner, keys?: AgentKeyStore): Promise<IdentityRegistry> {
+    const registry = new IdentityRegistry(dataDir, signer, keys ?? (await AgentKeyStore.open(dataDir, undefined)));
     await registry.initialize();
     return registry;
+  }
+
+  /** Whether agent keys survive a restart, and if not, why. */
+  get keystoreMode(): AgentKeyStore["mode"] {
+    return this.keys.mode;
   }
 
   private async initialize(): Promise<void> {
@@ -71,7 +79,7 @@ export class IdentityRegistry {
     await initAgentIdentity();
 
     // Get the gatekeeper's raw keys for issuing/verifying credentials
-    this.issuerSecretKey = this.signer.getSecretKeyRaw();
+    this.issuerSigner = this.signer.asSignerProvider();
     this.issuerPublicKey = this.signer.getPublicKeyRaw();
 
     // Load existing registry from disk
@@ -87,18 +95,18 @@ export class IdentityRegistry {
    * Issue and store a new credential.
    */
   register(request: CredentialIssueRequest): AgentCredential {
-    if (!this.issuerSecretKey) {
+    if (!this.issuerSigner) {
       throw new Error("Registry not initialized — issuer key unavailable");
     }
 
     const { credential, agentSecretKey } = issueCredentialWithKey(
       request,
-      this.issuerSecretKey
+      this.issuerSigner
     );
     this.credentials.set(credential.agentId, credential);
-    // Store secret key in-memory for delegation support
-    this.agentSecretKeys.set(credential.agentId, agentSecretKey);
     this.save();
+    // Custody of the agent key (enables delegation from this agent)
+    this.keys.adopt(credential.agentId, agentSecretKey, Buffer.from(credential.publicKey, "hex"));
 
     return credential;
   }
@@ -144,6 +152,7 @@ export class IdentityRegistry {
     const revoked = revokeCredentialFn(credential, reason);
     this.credentials.set(agentId, revoked);
     this.save();
+    this.keys.delete(agentId);
     return true;
   }
 
@@ -198,7 +207,7 @@ export class IdentityRegistry {
    * Returns the DelegatedCredential (caller must not expose agent secret keys).
    */
   delegate(request: DelegationRequest): DelegatedCredential {
-    if (!this.issuerSecretKey) {
+    if (!this.issuerSigner) {
       throw new Error("Registry not initialized — issuer key unavailable");
     }
 
@@ -211,24 +220,24 @@ export class IdentityRegistry {
       throw new Error(`Delegation failed: ${validation.reason}`);
     }
 
-    // Get parent's agent secret key (must be in-memory from registration/delegation)
-    const parentSecretKey = this.agentSecretKeys.get(request.parentAgentId);
-    if (!parentSecretKey) {
+    const parentSigner = this.keys.get(request.parentAgentId);
+    if (!parentSigner) {
       throw new Error(
-        "Parent agent secret key not available — parent was registered in a previous session"
+        this.keys.mode.durable
+          ? "Parent agent key not available — it was not stored in the keystore"
+          : "Parent agent key not available — it was registered before a restart and the keystore is not durable (set ATLAS_KEYSTORE_PASSPHRASE)"
       );
     }
 
     const { credential, childSecretKey } = delegateCredentialWithKey(
       request,
-      parentSecretKey,
-      this.issuerSecretKey,
+      parentSigner,
+      this.issuerSigner,
       this
     );
 
-    // Store credential and child secret key (in-memory only)
     this.credentials.set(credential.agentId, credential);
-    this.agentSecretKeys.set(credential.agentId, childSecretKey);
+    this.keys.adopt(credential.agentId, childSecretKey, Buffer.from(credential.publicKey, "hex"));
 
     // Update children index
     const parentChildren = this.childrenIndex.get(request.parentAgentId) || [];
@@ -240,19 +249,11 @@ export class IdentityRegistry {
   }
 
   /**
-   * Store an agent's secret key in-memory (never persisted).
-   * Called after register() or delegate() when the caller needs to
-   * enable further delegation from this agent.
+   * The agent's signer, if its key is in custody (registered or delegated in
+   * this process, or stored in a durable keystore). The key is never exported.
    */
-  storeAgentSecretKey(agentId: string, secretKey: Uint8Array): void {
-    this.agentSecretKeys.set(agentId, secretKey);
-  }
-
-  /**
-   * Get an agent's secret key from in-memory storage.
-   */
-  getAgentSecretKey(agentId: string): Uint8Array | undefined {
-    return this.agentSecretKeys.get(agentId);
+  getAgentSigner(agentId: string): SignerProvider | undefined {
+    return this.keys.get(agentId);
   }
 
   /**
@@ -285,9 +286,9 @@ export class IdentityRegistry {
   cascadeRevoke(parentAgentId: string, reason: string): string[] {
     const revoked = cascadeRevokeFn(parentAgentId, reason, this);
 
-    // Clear session keys for revoked agents
+    // Destroy the revoked agents' keys
     for (const id of revoked) {
-      this.agentSecretKeys.delete(id);
+      this.keys.delete(id);
     }
 
     this.save();
@@ -299,7 +300,7 @@ export class IdentityRegistry {
    * so subsequent issue/verify operations use the new key.
    */
   syncIssuerKeys(): void {
-    this.issuerSecretKey = this.signer.getSecretKeyRaw();
+    this.issuerSigner = this.signer.asSignerProvider();
     this.issuerPublicKey = this.signer.getPublicKeyRaw();
   }
 
@@ -308,7 +309,7 @@ export class IdentityRegistry {
    * issuer secret key. Used during SPEC §4.5 key rotation. Returns counts;
    * failed credentials are left unchanged.
    */
-  reissueAllActive(issuerSecretKey: Uint8Array): {
+  reissueAllActive(issuerSecretKey: SigningKey): {
     reissued: number;
     failed: number;
     failedIds: string[];

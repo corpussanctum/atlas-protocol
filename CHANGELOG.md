@@ -5,6 +5,19 @@ All notable changes to Atlas Protocol are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Restart-durable agent keys** (#4). Agent signing keys lived only in
+  memory, so after a gatekeeper restart no agent registered earlier could
+  delegate. New `SignerProvider` interface (sign / publicKey / id /
+  capabilities, no key export) with `EphemeralSigner` and
+  `FileBackedEncryptedSigner` (scrypt → AES-256-GCM, bound to the agent DID
+  and public key, 0600 under `agent-keys/`). With `ATLAS_KEYSTORE_PASSPHRASE`
+  set, new agent keys are stored encrypted and reloaded after a restart;
+  without it (or with a wrong one) behavior is unchanged and stored keys are
+  left untouched. Revocation, including cascade, now destroys the key.
+  Credential issuance signs through the issuer's `SignerProvider`; the
+  issuer key's at-rest storage is unchanged. `atlas_status` reports
+  `agent_identity.keystore` and `session_can_delegate`. SPEC §5.2 adds key
+  custody requirements.
 - **Operator-signed identity attach** (#39). A server restart left the session's
   credential valid but unbound, so every permission request was denied
   `UNREGISTERED_AGENT` and registration was locked. `atlas-operator attach

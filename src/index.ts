@@ -46,6 +46,7 @@ import type { ToolContext } from "./mcp/context.js";
 import { escapeHtml } from "./html.js";
 import { createPermissionPipeline } from "./authority/permission-pipeline.js";
 import { operatorPreviewPolicyFromEnv } from "./authority/operator-preview.js";
+import { AgentKeyStore } from "./signer-provider.js";
 
 
 /** Claude Code channel permission relay (non-spec notification). */
@@ -66,8 +67,14 @@ async function main(): Promise<void> {
   // Initialize ML-DSA-65 quantum signer
   const signer = await QuantumSigner.create(config.data_dir);
 
+  // Agent key custody (#4): durable only with ATLAS_KEYSTORE_PASSPHRASE
+  const agentKeys = await AgentKeyStore.open(config.data_dir, process.env.ATLAS_KEYSTORE_PASSPHRASE || undefined);
+  if (!agentKeys.mode.durable && agentKeys.mode.reason !== "NO_PASSPHRASE") {
+    console.error(`[atlas] Warning: agent keystore unavailable (${agentKeys.mode.reason}); agent keys will not survive a restart`);
+  }
+
   // Initialize identity registry
-  const registry = await IdentityRegistry.create(config.data_dir, signer);
+  const registry = await IdentityRegistry.create(config.data_dir, signer, agentKeys);
 
   // Session-level active agent ID (set by atlas_identity_register)
   let sessionAgentId: string | undefined;

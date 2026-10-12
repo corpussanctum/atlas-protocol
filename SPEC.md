@@ -266,7 +266,7 @@ A gatekeeper MAY hold a session's binding to its credential only in memory. When
 | **Single use** | Consumed atomically on the first attempt, whether or not it verifies. Nonces of accepted tokens MUST be recorded until expiry and replays rejected |
 | **Session** | MUST NOT replace a session binding that still attests successfully |
 
-A successful attach MUST log `IDENTITY_ATTACHED`. A rejected token MUST log `POLICY_DENY` with `event_detail: IDENTITY_ATTACH_REJECTED`. Attaching does not restore the agent's secret key. The reference implementation provides this as `atlas-operator attach --agent DID` plus the `atlas_identity_attach` tool.
+A successful attach MUST log `IDENTITY_ATTACHED`. A rejected token MUST log `POLICY_DENY` with `event_detail: IDENTITY_ATTACH_REJECTED`. Attaching does not carry the agent's secret key; delegation from an attached credential works only if the key is in durable custody (§5.2). The reference implementation provides this as `atlas-operator attach --agent DID` plus the `atlas_identity_attach` tool.
 
 ## 5. Credential delegation
 
@@ -299,6 +299,21 @@ The delegation chain signature MUST bind the actual delegated authority, not jus
 The parent agent's ML-DSA-65 secret key signs this object. The gatekeeper's issuer key co-signs the full credential.
 
 This prevents substitution attacks where an attacker replays a chain signature with different capabilities or expiry.
+
+**Agent key custody:** the gatekeeper holds each agent's secret key so it can sign chain signatures on the agent's behalf. Requirements:
+
+| Requirement | Level |
+|---|---|
+| Agent secret keys MUST NOT be written to disk unencrypted, or included in the identity registry | MUST |
+| Persisted keys MUST be encrypted with an authenticated cipher under a key-encryption key that is not stored alongside them, and the ciphertext MUST be bound to the owning agent ID and public key | MUST |
+| Key files SHOULD be readable only by the gatekeeper's OS user (mode 0600, directory 0700) | SHOULD |
+| Revoking a credential (directly or by cascade) MUST destroy the stored key | MUST |
+| Signing SHOULD go through an interface that does not export the raw key | SHOULD |
+| If the key-encryption key is missing or wrong, the gatekeeper SHOULD keep running with in-memory keys and MUST NOT modify or delete stored keys | SHOULD / MUST |
+
+Without durable custody, delegation from an agent registered before a restart is unavailable. A key-encryption key held in the gatekeeper's environment protects keys in backups and copies of the data directory, but not from an agent running as the same OS user (Appendix H).
+
+The reference implementation uses scrypt (N=2^16, r=8, p=1) and AES-256-GCM, stores keys under `<data_dir>/agent-keys/`, and takes the passphrase from `ATLAS_KEYSTORE_PASSPHRASE`. The issuer key goes through the same `SignerProvider` interface for credential signing; its at-rest storage is unchanged in this version.
 
 ### 5.3 Cascade revocation
 
