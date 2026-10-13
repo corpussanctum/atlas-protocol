@@ -66,7 +66,7 @@ Hard-deny rules (step 2) MUST NOT be bypassed by quiet mode, break-glass, or any
 ### 3.3 Policy engine semantics
 
 - Rules MUST be evaluated in order. First match wins. Evaluation MUST stop at the first matching rule.
-- Each rule has a `tool_pattern`, an `action` (deny | ask | allow), an OPTIONAL `reason`, and an OPTIONAL `mitre_id`.
+- Each rule has a `tool_pattern`, an `action` (deny | ask | allow), an OPTIONAL `reason`, an OPTIONAL `mitre_id`, and an OPTIONAL `effect` matcher (§3.3.2).
 - If no rule matches, the default verdict MUST be "ask".
 - Implementations SHOULD tag deny rules with MITRE ATT&CK technique IDs.
 
@@ -107,6 +107,32 @@ Matches if the tool name matches `<tool_glob>` AND the input preview matches any
 | **Empty input** | If a tool+input pattern is used but the request has an empty `input_preview`, only the `*` glob matches. |
 | **Ordering guarantee** | Rules MUST be stored and evaluated in the order they appear in the configuration. Implementations MUST NOT reorder, deduplicate, or optimize rules. |
 | **Portability** | Implementations that claim conformance MUST produce the same match result for the reference test fixtures (`tests/policy-fixtures.test.ts`). |
+
+### 3.3.2 Canonical effects
+
+Before rules are evaluated, a normalizer MAY turn the request into canonical effects that describe what the request does, independent of how it is spelled. Each effect is an object:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `effect` | enum | `exec`, `exec.dynamic`, `fs.read`, `fs.write`, `fs.delete`, `fs.permission`, `device.write`, `net.connect`, `net.listen`, `vcs.push`, `vcs.rewrite` |
+| `target` | string or null | Path, host or URL; null when not statically known |
+| `recursive` | boolean | |
+| `scope` | enum | `project`, `temp`, `home`, `system`, `device`, `remote`, `unknown` |
+| `reversible` | boolean | Whether the effect can normally be undone |
+| `command` | string | Program producing the effect (basename), or the tool name for non-shell tools |
+
+`docs/effect-vocabulary.schema.json` publishes this vocabulary as JSON Schema so other enforcement layers can produce or consume the same effects.
+
+A rule's OPTIONAL `effect` matcher has the fields `effect` (array of kinds), `command` (array of names, case-insensitive), `target` (glob as in §3.3.1), `recursive`, `scope` (array) and `reversible`. Every field present MUST match, and the rule applies when its `tool_pattern` matches AND at least one effect matches the matcher. Rule order and first-match semantics are unchanged.
+
+| Requirement | Level |
+|---|---|
+| Normalizers MUST be deterministic and MUST NOT consult a language model | MUST |
+| A normalizer failure or partial parse MUST NOT change the verdict that string rules and the default would give; it only removes effect evidence | MUST |
+| When `input_preview` is redacted in the audit log, effect targets MUST be redacted with it | MUST |
+| A matcher with unknown fields, kinds or scopes MUST cause the rule set to be rejected, as for any malformed rule | MUST |
+
+The reference implementation normalizes the file tools (Read, Write, Edit, MultiEdit, NotebookEdit) from the path in `input_preview`, either a bare path or the tool input as JSON. Shell commands produce no effects until a shell normalizer is supplied through the `EffectNormalizer` interface (`src/effects.ts`). The default rule set has no effect rules yet, so default verdicts are unchanged.
 
 ### 3.4 Anomaly detection
 

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/corpussanctum/atlas-protocol/docs/effect-vocabulary.schema.json",
+  "title": "Atlas canonical effect",
+  "description": "What a tool request does, independent of how it is spelled (SPEC §3.3.2). Produced by a deterministic normalizer before policy evaluation.",
+  "type": "object",
+  "required": ["effect", "target", "recursive", "scope", "reversible", "command"],
+  "additionalProperties": false,
+  "properties": {
+    "effect": {
+      "enum": [
+        "exec",
+        "exec.dynamic",
+        "fs.read",
+        "fs.write",
+        "fs.delete",
+        "fs.permission",
+        "device.write",
+        "net.connect",
+        "net.listen",
+        "vcs.push",
+        "vcs.rewrite"
+      ],
+      "description": "exec: a program runs. exec.dynamic: code or a command name decided at runtime. fs.permission: mode or ownership change. device.write: raw block or character device. vcs.rewrite: history or working-tree changes the VCS can't undo."
+    },
+    "target": {
+      "type": ["string", "null"],
+      "description": "Path, host or URL the effect applies to; null when not statically known."
+    },
+    "recursive": { "type": "boolean" },
+    "scope": {
+      "enum": ["project", "temp", "home", "system", "device", "remote", "unknown"],
+      "description": "project: relative path. temp: /tmp, /var/tmp, /dev/null. home: ~, $HOME, /home, /root. system: other absolute paths. device: /dev/*. remote: URL or user@host:path."
+    },
+    "reversible": {
+      "type": "boolean",
+      "description": "Whether the effect can normally be undone."
+    },
+    "command": {
+      "type": "string",
+      "description": "Program producing the effect (basename), or the tool name for non-shell tools."
+    }
+  }
+}

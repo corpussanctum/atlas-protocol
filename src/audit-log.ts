@@ -439,6 +439,16 @@ export class AuditLogger {
     // Apply field redaction to permission object
     if (entry.permission && this.redaction.redact_fields.length > 0) {
       entry.permission = this.redactPermission(entry.permission);
+      // Effect targets come from the input, so they are hidden with it (#9)
+      if (this.redaction.redact_fields.includes("input_preview") && entry.policy_result?.effects?.length) {
+        entry.policy_result = {
+          ...entry.policy_result,
+          effects: entry.policy_result.effects.map((e) => ({
+            ...e,
+            target: e.target ? `HASHED:${createHash("sha256").update(e.target).digest("hex")}` : e.target,
+          })),
+        };
+      }
       entry.meta = {
         ...entry.meta,
         redacted_fields: this.redaction.redact_fields,

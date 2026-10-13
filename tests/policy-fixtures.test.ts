@@ -10,6 +10,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { PolicyEngine } from "../src/policy-engine.js";
 import type { PermissionRequest } from "../src/policy-engine.js";
 import { loadConfig } from "../src/config.js";
@@ -321,7 +323,33 @@ describe("PolicyEngine — Fixture-based regression tests", () => {
   describe("EDGE CASES — evasion and boundary conditions", () => {
     runFixtures(engine, EDGE_CASE_FIXTURES);
   });
+
+  // Operator-maintained corpus (#9): tests/fixtures/policy-bypass.json holds
+  // an array of PolicyFixture objects. It ships empty.
+  describe("BYPASS corpus — tests/fixtures/policy-bypass.json", () => {
+    const corpus = loadBypassCorpus();
+    if (corpus.length === 0) {
+      it("corpus file is valid (no cases yet)", () => assert.deepEqual(corpus, []));
+    } else {
+      runFixtures(engine, corpus);
+    }
+  });
 });
+
+function loadBypassCorpus(): PolicyFixture[] {
+  const path = join(process.cwd(), "tests", "fixtures", "policy-bypass.json");
+  if (!existsSync(path)) return [];
+  const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
+  assert.ok(Array.isArray(raw), "policy-bypass.json must contain a JSON array");
+  for (const f of raw as PolicyFixture[]) {
+    assert.ok(
+      typeof f.label === "string" && typeof f.tool === "string" && typeof f.input === "string" &&
+        ["deny", "ask", "allow"].includes(f.expectedVerdict),
+      `invalid bypass fixture: ${JSON.stringify(f).slice(0, 120)}`,
+    );
+  }
+  return raw as PolicyFixture[];
+}
 
 // ---------------------------------------------------------------------------
 // Anomaly flag detection tests

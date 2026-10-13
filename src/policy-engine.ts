@@ -18,6 +18,7 @@
 import type { PolicyRule, AtlasConfig } from "./config.js";
 import type { IdentityContext, SensitivityClassification, ConsentTier } from "./identity-provider.js";
 import { emptyIdentityContext } from "./identity-provider.js";
+import { effectMatches, fileToolNormalizer, type Effect, type EffectNormalizer } from "./effects.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,6 +40,18 @@ export interface PolicyResult {
   sensitivity_matches: SensitivityMatch[];
   /** Whether identity context contributed to the decision */
   identity_evaluated: boolean;
+  /** Canonical effects of the request (#9) */
+  effects?: Effect[];
+  /** False when the normalizer could not fully interpret the input */
+  effects_complete?: boolean;
+}
+
+export interface PolicyEngineOptions {
+  /**
+   * Turns requests into effects for rules with an `effect` matcher.
+   * Default: the built-in file-tool normalizer (Read/Write/Edit paths).
+   */
+  normalizer?: EffectNormalizer;
 }
 
 export interface PermissionRequest {
@@ -118,9 +131,11 @@ export class PolicyEngine {
   private readonly rules: PolicyRule[];
   private readonly velocity: VelocityTracker;
   private identityContext: IdentityContext;
+  private readonly normalizer: EffectNormalizer;
 
-  constructor(config: AtlasConfig, identityContext?: IdentityContext) {
+  constructor(config: AtlasConfig, identityContext?: IdentityContext, options: PolicyEngineOptions = {}) {
     this.rules = config.policy_rules;
+    this.normalizer = options.normalizer ?? fileToolNormalizer;
     this.velocity = new VelocityTracker(60_000, config.velocity_limit_per_minute);
     this.identityContext = identityContext ?? emptyIdentityContext();
   }
@@ -139,6 +154,14 @@ export class PolicyEngine {
     const anomaly_flags: string[] = [];
     const sensitivity_matches: SensitivityMatch[] = [];
     const identity_evaluated = this.identityContext.loaded;
+    let effects: Effect[] = [];
+    let effects_complete = false;
+    try {
+      ({ effects, complete: effects_complete } = this.normalizer(req));
+    } catch {
+      // A failing normalizer contributes no effects; string rules still apply
+      anomaly_flags.push("EFFECT_NORMALIZER_ERROR: request could not be normalized");
+    }
 
     // -- Velocity check ----------------------------------------------------
     if (this.velocity.record()) {
@@ -231,6 +254,8 @@ export class PolicyEngine {
               anomaly_flags,
               sensitivity_matches,
               identity_evaluated,
+              effects,
+              effects_complete,
             };
           }
         }
@@ -240,13 +265,18 @@ export class PolicyEngine {
     // -- Static rule evaluation (first match wins) -------------------------
 
     for (const rule of this.rules) {
-      if (matchesPermission(rule.tool_pattern, req.tool_name, req.input_preview)) {
+      if (
+        matchesPermission(rule.tool_pattern, req.tool_name, req.input_preview) &&
+        (!rule.effect || effects.some((e) => effectMatches(rule.effect!, e)))
+      ) {
         return {
           verdict: rule.action,
           matched_rule: rule,
           anomaly_flags,
           sensitivity_matches,
           identity_evaluated,
+          effects,
+          effects_complete,
         };
       }
     }
@@ -259,6 +289,8 @@ export class PolicyEngine {
       anomaly_flags,
       sensitivity_matches,
       identity_evaluated,
+      effects,
+      effects_complete,
     };
   }
 }

@@ -111,6 +111,15 @@ Atlas reads configuration from environment variables, a config file (`config.jso
 
 `config.json` is type-checked field by field. A wrong-typed or out-of-range value, or an unknown key, is ignored: it keeps its default, triggers a warning on stderr, and is recorded in the `CONFIG_LOADED` audit entry as `rejected_config_fields`. If any entry in `policy_rules` is malformed, the whole custom rule set is rejected and the built-in rules stay in force, so a typo can never silently drop a deny rule.
 
+A rule can also match on what a request does rather than how it is spelled, through an `effect` matcher (SPEC §3.3.2). This rule, for example, asks before any file tool writes outside the home directory or the project:
+
+```json
+{ "tool_pattern": "*", "action": "ask", "reason": "write to a system path",
+  "effect": { "effect": ["fs.write"], "scope": ["system", "device"] } }
+```
+
+File tools (Read, Write, Edit) are normalized today. Shell commands produce no effects until a shell normalizer is added (#9), so `effect` rules don't match Bash requests yet.
+
 ### Required
 
 | Variable | Description |
