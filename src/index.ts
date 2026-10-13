@@ -12,8 +12,9 @@
  *   - anomaly flagging for higher-risk tool requests
  */
 
-import { Server } from "@modelcontextprotocol/server";
+import { ProtocolError, ProtocolErrorCode, Server, type JsonSchemaType } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv";
 import { z } from "zod";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
@@ -312,11 +313,27 @@ async function main(): Promise<void> {
   };
   const toolHandlers = createToolHandlers(toolContext);
 
+  // Arguments are checked against each tool's inputSchema before dispatch (#7).
+  const schemaValidator = new AjvJsonSchemaValidator();
+  const argumentValidators = new Map(
+    toolDefinitions.map((def) => [def.name, schemaValidator.getValidator(def.inputSchema as JsonSchemaType)]),
+  );
+
   mcp.setRequestHandler("tools/call", async (request) => {
     const { name, arguments: args } = request.params;
     const handler = Object.hasOwn(toolHandlers, name) ? toolHandlers[name] : undefined;
-    if (!handler) {
-      return { content: [{ type: "text" as const, text: `Unknown tool: ${name}` }], isError: true };
+    const validate = argumentValidators.get(name);
+    if (!handler || !validate) {
+      // MCP 2025-11-25: an unknown tool is a protocol error, not a tool result
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Unknown tool: ${name}`);
+    }
+    const checked = validate(args ?? {});
+    if (!checked.valid) {
+      // Input validation failures are tool execution errors, so the model can correct the call
+      return {
+        content: [{ type: "text" as const, text: `Invalid arguments for ${name}: ${checked.errorMessage}` }],
+        isError: true,
+      };
     }
     return handler(args);
   });

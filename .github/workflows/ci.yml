@@ -44,6 +44,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: MCP conformance against the built entry point (#7)
+        run: ATLAS_CONFORMANCE_SERVER=dist/index.js node --test .test-dist/tests/mcp-conformance.test.js
       - name: Package contents include the server entry point
         run: npm pack --dry-run 2>&1 | tee /dev/stderr | grep -q 'dist/index.js'
 

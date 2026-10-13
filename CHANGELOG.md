@@ -5,6 +5,15 @@ All notable changes to Atlas Protocol are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **MCP conformance tests** (#7). `tests/mcp-conformance.test.ts` drives the
+  server over stdio with raw JSON-RPC, not an SDK client. It covers
+  initialize and version negotiation for every supported revision, ping,
+  the shape and annotations of `tools/list`, the `tools/call` error classes,
+  unknown methods and notifications, recovery from a non-JSON line, and
+  checks that stdout carries only JSON-RPC. CI also runs it against the built
+  `dist/index.js`. The official `@modelcontextprotocol/conformance` suite
+  isn't used: it only tests servers over HTTP, and its tool scenarios need
+  its own fixture tools.
 - **Issuer key encrypted at rest** (#45). With `ATLAS_KEYSTORE_PASSPHRASE`
   set, the gatekeeper's ML-DSA-65 issuer key is stored wrapped in
   `quantum-keypair.enc.json` (scrypt → AES-256-GCM, bound to the issuer label
@@ -69,6 +78,11 @@ All notable changes to Atlas Protocol are documented in this file.
   a v1-era client (as Claude Code uses); a new test covers the v2 client.
 
 ### Fixed
+- **`tools/call` follows the MCP 2025-11-25 error rules** (#7). An unknown tool
+  now gets a JSON-RPC `-32602` error instead of an `isError` result.
+  Arguments are validated against the tool's `inputSchema` before the
+  handler runs. Wrong types and missing required fields return an `isError`
+  result naming the problem (before, `agent_id: 42` reached the handler).
 - **Privacy: Telegram approval prompts no longer carry PHI** (#17). Privacy
   mode and briefcase redaction applied only to the audit log, so the first 500
   characters of every tool input (and the description) still went through
