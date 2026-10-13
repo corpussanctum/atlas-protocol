@@ -138,7 +138,12 @@ describe("MCP tool surface (snapshot)", () => {
     await call("atlas_audit_rotate");
     await call("atlas_reply", { message: "hello" });
     await call("atlas_identity_register", { name: "bad" });
-    await call("atlas_no_such_tool");
+    // An unknown tool is a JSON-RPC protocol error, not a tool result (#7)
+    await assert.rejects(() => client.callTool({ name: "atlas_no_such_tool", arguments: {} }), (err: any) => {
+      assert.equal(err.code, -32602);
+      transcript.push({ tool: "atlas_no_such_tool", isError: true, text: `protocol error ${err.code}: ${norm(err.message)}` });
+      return true;
+    });
 
     matchSnapshot("tool-calls.json", transcript);
   });

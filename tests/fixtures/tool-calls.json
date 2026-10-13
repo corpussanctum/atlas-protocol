@@ -157,11 +157,11 @@
   {
     "tool": "atlas_identity_register",
     "isError": true,
-    "text": "Error: name, role, and capabilities are required"
+    "text": "Invalid arguments for atlas_identity_register: data must have required property 'role', data must have required property 'capabilities'"
   },
   {
     "tool": "atlas_no_such_tool",
     "isError": true,
-    "text": "Unknown tool: atlas_no_such_tool"
+    "text": "protocol error -32602: MCP error -32602: Unknown tool: atlas_no_such_tool"
   }
 ]
