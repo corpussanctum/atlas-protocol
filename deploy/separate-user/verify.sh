@@ -26,7 +26,8 @@ expect_denied() {
 echo "Checking as $(id -un) (uid $(id -u))"
 
 expect_denied "cannot list the data dir"             ls "$DATA"
-expect_denied "cannot read the issuer key"           cat "$DATA/quantum-keypair.json"
+expect_denied "cannot read the issuer key"           cat "$DATA/quantum-keypair.enc.json"
+expect_denied "cannot read a plaintext issuer key"   cat "$DATA/quantum-keypair.json"
 expect_denied "cannot read the audit log"            cat "$DATA/audit.jsonl"
 expect_denied "cannot append to the audit log"       sh -c "echo x >> '$DATA/audit.jsonl'"
 expect_denied "cannot create files in the data dir"  touch "$DATA/agent-was-here"

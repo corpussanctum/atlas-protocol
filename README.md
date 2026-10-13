@@ -130,7 +130,7 @@ Atlas reads configuration from environment variables, a config file (`config.jso
 | `ATLAS_PRIVACY_MODE` | `false` | Redact tool input from the audit log and withhold it (and the description) from Telegram approval prompts |
 | `ATLAS_REQUIRE_ISOLATION` | `false` | Refuse to start unless the gatekeeper runs as a separate user from the agent with private state (see `deploy/separate-user/`) |
 | `ATLAS_AGENT_UID` | — | UID of the agent user, for launchers other than sudo (sudo sets `SUDO_UID`) |
-| `ATLAS_KEYSTORE_PASSPHRASE` | — | Encrypts agent signing keys at rest under `<data_dir>/agent-keys/` so delegation survives a restart. Unset: keys stay in memory only |
+| `ATLAS_KEYSTORE_PASSPHRASE` | — | Encrypts the issuer key and agent signing keys at rest, so delegation survives a restart. An existing plaintext issuer key is migrated on first start. Once set, Atlas won't start without it. Unset: agent keys stay in memory only and the issuer key stays in plaintext |
 | `ATLAS_TELEGRAM_SEND_INPUT` | `false` | In privacy mode, still send the input preview to Telegram. Tier 3+ sensitive data is withheld regardless |
 | `ATLAS_VELOCITY_LIMIT` | `30` | Requests per minute before anomaly flag |
 | `ATLAS_POLL_INTERVAL_MS` | `1000` | Telegram polling interval |
@@ -482,7 +482,12 @@ The audit log includes hardening beyond basic hash chaining (see [SPEC.md](SPEC.
 
 ### Key management
 
-The ML-DSA-65 signing keypair is auto-generated on first run and stored at `<data_dir>/quantum-keypair.json` (mode 0600). The public key hash is logged in `SESSION_START` for key pinning. The same key serves as the credential issuer for agent identity.
+The ML-DSA-65 signing keypair is auto-generated on first run. The public key hash is logged in `SESSION_START` for key pinning. The same key serves as the credential issuer for agent identity.
+
+- With `ATLAS_KEYSTORE_PASSPHRASE` set, the key is stored encrypted at `<data_dir>/quantum-keypair.enc.json` (scrypt and AES-256-GCM, mode 0600). On the first start with the passphrase, an existing plaintext key is migrated: Atlas writes the encrypted copy, checks that it decrypts, then deletes the plaintext.
+- After that, Atlas refuses to start if the passphrase is missing or wrong, rather than generating a new key, which would invalidate every credential.
+- To change the passphrase, stop the server and run `atlas-operator rewrap-issuer-key`.
+- Without a passphrase, the key stays in plaintext at `<data_dir>/quantum-keypair.json` (mode 0600). `atlas_status` reports which is in use (`quantum_signing.key_storage`).
 
 ## Identity and Briefcase integration
 
@@ -638,7 +643,7 @@ cd packages/atlas-didcomm-adapter && npm test  # 129 tests
 - The policy engine uses glob patterns and string matching, not semantic analysis. Known false positives exist (e.g., `TRUNCATE` matching the `ncat` network tool pattern). Defense in depth applies.
 - The Why Layer requires a running Ollama instance. Without it, the layer returns nominal stubs — it never blocks the gatekeeper.
 - Behavioral baselines need ~10 sessions before drift detection produces meaningful signals (maturity model handles this).
-- Agent signing keys survive a restart only when `ATLAS_KEYSTORE_PASSPHRASE` is set, and only for agents registered or delegated while it was set. The passphrase sits in the same environment as Atlas, so it protects keys in backups, not from a same-user agent.
+- Agent signing keys survive a restart only when `ATLAS_KEYSTORE_PASSPHRASE` is set, and only for agents registered or delegated while it was set. The passphrase sits in the same environment as Atlas, so it protects the issuer and agent keys in backups and copies of the data directory, not from a same-user agent.
 - Quiet mode requires explicit opt-in (`ATLAS_QUIET_MODE=true`) and only affects read-only tools for mature agents.
 - ProximityMesh is a research/demo profile. Raspberry Pi and ESP32 adapters are untested reference drivers; iOS/Android are TypeScript stubs pending native modules; the ESP32 UART firmware is not implemented. Mock drivers are included for development.
 - Proximity session crypto is X25519 ECDH + HKDF-SHA256 + AES-256-GCM with proximity proof as additional data. It follows an IK/KK key-use pattern; it is not a byte-compatible Noise_IK handshake. ML-DSA-65 static keys are identity keys, not DH keys.

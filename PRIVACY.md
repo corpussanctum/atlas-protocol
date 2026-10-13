@@ -19,6 +19,7 @@ Atlas Protocol is a **local-first security tool**. It processes:
 | Audit log entries | **Local filesystem** only | Tamper-evident audit trail |
 | Agent credentials | **Local filesystem** only | Identity registry |
 | Agent signing keys | **Memory**, or **local filesystem** encrypted (with `ATLAS_KEYSTORE_PASSPHRASE`) | Delegation |
+| Issuer signing key | **Local filesystem** only, encrypted with `ATLAS_KEYSTORE_PASSPHRASE` (plaintext, mode 0600, without it) | Audit and credential signatures |
 | Behavioral baselines | **Local filesystem** only | Drift detection |
 | Why Layer prompts | **Ollama** (local or configured endpoint) | Anomaly assessment |
 | Proximity proofs | **Local filesystem** + **peer device** (mesh sessions) | Proximity attestation |

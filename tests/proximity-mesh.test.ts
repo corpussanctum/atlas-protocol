@@ -133,7 +133,6 @@ describe("Proximity Mesh — Noise session", () => {
       "did:atlas:responder",
       {
         localStaticPublicKey: randomBytes(32),
-        localStaticSecretKey: randomBytes(32),
         localEphemeralPublicKey: initiatorKeys.publicKey,
         localEphemeralSecretKey: initiatorKeys.secretKey,
         remoteEphemeralPublicKey: responderKeys.publicKey,
@@ -146,7 +145,6 @@ describe("Proximity Mesh — Noise session", () => {
       "did:atlas:initiator",
       {
         localStaticPublicKey: randomBytes(32),
-        localStaticSecretKey: randomBytes(32),
         localEphemeralPublicKey: responderKeys.publicKey,
         localEphemeralSecretKey: responderKeys.secretKey,
         remoteEphemeralPublicKey: initiatorKeys.publicKey,
@@ -174,7 +172,6 @@ describe("Proximity Mesh — Noise session", () => {
 
     const { sessionHash: initHash } = initiateNoiseHandshake("did:atlas:r", {
       localStaticPublicKey: new Uint8Array(0),
-      localStaticSecretKey: new Uint8Array(0),
       localEphemeralPublicKey: initiatorKeys.publicKey,
       localEphemeralSecretKey: initiatorKeys.secretKey,
       remoteEphemeralPublicKey: responderKeys.publicKey,
@@ -184,7 +181,6 @@ describe("Proximity Mesh — Noise session", () => {
 
     const { sessionHash: respHash } = respondNoiseHandshake("did:atlas:i", {
       localStaticPublicKey: new Uint8Array(0),
-      localStaticSecretKey: new Uint8Array(0),
       localEphemeralPublicKey: responderKeys.publicKey,
       localEphemeralSecretKey: responderKeys.secretKey,
       remoteEphemeralPublicKey: initiatorKeys.publicKey,
@@ -204,7 +200,6 @@ describe("Proximity Mesh — Noise session", () => {
 
     const { session: session1 } = initiateNoiseHandshake("did:atlas:a", {
       localStaticPublicKey: randomBytes(32),
-      localStaticSecretKey: randomBytes(32),
       localEphemeralPublicKey: keys1.publicKey,
       localEphemeralSecretKey: keys1.secretKey,
       remoteEphemeralPublicKey: keys2.publicKey,
@@ -214,7 +209,6 @@ describe("Proximity Mesh — Noise session", () => {
     // Different session with different keys
     const { session: session3 } = respondNoiseHandshake("did:atlas:b", {
       localStaticPublicKey: randomBytes(32),
-      localStaticSecretKey: randomBytes(32),
       localEphemeralPublicKey: keys3.publicKey,
       localEphemeralSecretKey: keys3.secretKey,
       remoteEphemeralPublicKey: keys1.publicKey,
@@ -234,7 +228,6 @@ describe("Proximity Mesh — Noise session", () => {
 
     const { session } = initiateNoiseHandshake("did:atlas:peer", {
       localStaticPublicKey: randomBytes(32),
-      localStaticSecretKey: randomBytes(32),
       localEphemeralPublicKey: keys1.publicKey,
       localEphemeralSecretKey: keys1.secretKey,
       remoteEphemeralPublicKey: keys2.publicKey,

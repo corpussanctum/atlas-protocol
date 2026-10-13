@@ -5,6 +5,16 @@ All notable changes to Atlas Protocol are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Issuer key encrypted at rest** (#45). With `ATLAS_KEYSTORE_PASSPHRASE`
+  set, the gatekeeper's ML-DSA-65 issuer key is stored wrapped in
+  `quantum-keypair.enc.json` (scrypt → AES-256-GCM, bound to the issuer label
+  and public key). An existing plaintext `quantum-keypair.json` is migrated on
+  start: the wrapped copy is written and read back before the plaintext is
+  removed. Rotation re-wraps the new key. A wrapped key with a missing or
+  wrong passphrase, or an unreadable key file, stops startup instead of
+  generating a new issuer key. `atlas_status` reports
+  `quantum_signing.key_storage`, and `atlas-operator rewrap-issuer-key`
+  changes the passphrase.
 - **Separate-user deployment** (#23). `deploy/separate-user/install.sh` runs
   the gatekeeper as a dedicated `atlas` user:
   - code in root-owned `/opt/atlas-protocol`
@@ -44,6 +54,11 @@ All notable changes to Atlas Protocol are documented in this file.
   the requirements.
 
 ### Changed
+- **The issuer key is never silently regenerated** (#45). An unreadable
+  `quantum-keypair.json` used to be replaced with a new key, which voided
+  every credential; startup now stops with an error. `QuantumSigner` no
+  longer exposes the secret key (`getSecretKeyRaw()` is removed), and the
+  proximity handshake no longer receives it, since it never used it.
 - **MCP TypeScript SDK v2** (#6): the server now uses `@modelcontextprotocol/server`
   2.3 (2026-07-28 spec line) with zod 4, replacing `@modelcontextprotocol/sdk` v1.
   Handlers register by method name; the Claude Code channel permission relay

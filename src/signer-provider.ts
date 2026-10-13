@@ -98,6 +98,36 @@ function writePrivate(path: string, contents: string): void {
   }
 }
 
+export interface WrappedSecret {
+  iv: string;
+  tag: string;
+  ciphertext: string;
+}
+
+/**
+ * AES-256-GCM wrap of a secret key, bound to `label` and the public key.
+ * Shared by agent keys and the issuer key (#45).
+ */
+export function wrapSecret(kek: Buffer, label: string, secretKey: Uint8Array, publicKey: Uint8Array): WrappedSecret {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", kek, iv);
+  cipher.setAAD(aad(label, Buffer.from(publicKey).toString("hex")));
+  const ciphertext = Buffer.concat([cipher.update(secretKey), cipher.final()]);
+  return {
+    iv: iv.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+    ciphertext: ciphertext.toString("base64"),
+  };
+}
+
+/** Inverse of `wrapSecret`. Throws on a wrong key, tampering, or a label/public-key mismatch. */
+export function unwrapSecret(kek: Buffer, label: string, wrapped: WrappedSecret, publicKey: Uint8Array): Buffer {
+  const decipher = createDecipheriv("aes-256-gcm", kek, Buffer.from(wrapped.iv, "base64"));
+  decipher.setAAD(aad(label, Buffer.from(publicKey).toString("hex")));
+  decipher.setAuthTag(Buffer.from(wrapped.tag, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(wrapped.ciphertext, "base64")), decipher.final()]);
+}
+
 export class FileBackedEncryptedSigner extends InMemorySigner {
   private constructor(dsa: MlDsa65, secretKey: Uint8Array, publicKey: Uint8Array) {
     super(dsa, secretKey, publicKey, { durable: true });
@@ -112,22 +142,12 @@ export class FileBackedEncryptedSigner extends InMemorySigner {
     secretKey: Uint8Array,
     publicKey: Uint8Array,
   ): FileBackedEncryptedSigner {
-    const publicKeyHex = Buffer.from(publicKey).toString("hex");
-    const iv = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", kek, iv);
-    cipher.setAAD(aad(label, publicKeyHex));
-    const ciphertext = Buffer.concat([cipher.update(secretKey), cipher.final()]);
     const wrapped: WrappedKey = {
       version: 1,
       algorithm: "ML-DSA-65",
       label,
-      public_key: publicKeyHex,
-      cipher: {
-        name: "aes-256-gcm",
-        iv: iv.toString("base64"),
-        tag: cipher.getAuthTag().toString("base64"),
-        ciphertext: ciphertext.toString("base64"),
-      },
+      public_key: Buffer.from(publicKey).toString("hex"),
+      cipher: { name: "aes-256-gcm", ...wrapSecret(kek, label, secretKey, publicKey) },
     };
     writePrivate(path, JSON.stringify(wrapped, null, 2));
     return new FileBackedEncryptedSigner(dsa, secretKey, publicKey);
@@ -140,15 +160,10 @@ export class FileBackedEncryptedSigner extends InMemorySigner {
       throw new Error("Unsupported wrapped key format");
     }
     if (wrapped.label !== label) throw new Error("Wrapped key belongs to a different owner");
-    const decipher = createDecipheriv("aes-256-gcm", kek, Buffer.from(wrapped.cipher.iv, "base64"));
-    decipher.setAAD(aad(label, wrapped.public_key));
-    decipher.setAuthTag(Buffer.from(wrapped.cipher.tag, "base64"));
-    const secretKey = Buffer.concat([
-      decipher.update(Buffer.from(wrapped.cipher.ciphertext, "base64")),
-      decipher.final(),
-    ]);
+    const publicKey = Buffer.from(wrapped.public_key, "hex");
+    const secretKey = unwrapSecret(kek, label, wrapped.cipher, publicKey);
     try {
-      return new FileBackedEncryptedSigner(dsa, secretKey, Buffer.from(wrapped.public_key, "hex"));
+      return new FileBackedEncryptedSigner(dsa, secretKey, publicKey);
     } finally {
       secretKey.fill(0);
     }

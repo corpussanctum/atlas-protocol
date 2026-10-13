@@ -58,7 +58,7 @@ The agent user could read everything in the old data directory and the old MCP c
 
 - **Issuer key:** rotate it with `atlas_key_rotate`. Existing credentials are re-signed, and old audit signatures still verify against the archived public key.
 - **HMAC secret:** rotate the audit log first (`atlas_audit_rotate`), then set a new `ATLAS_HMAC_SECRET`. Keep the old secret offline if you need to re-check the archived log's HMACs.
-- **Agent keys and the keystore passphrase:** delete `/var/lib/atlas-protocol/agent-keys/`, set a new `ATLAS_KEYSTORE_PASSPHRASE`, and register fresh credentials. A different passphrase can't open the old keystore, so set it before the first start.
+- **Agent keys and the keystore passphrase:** delete `/var/lib/atlas-protocol/agent-keys/` and register fresh credentials. With the server stopped, run `atlas-operator rewrap-issuer-key` to move the issuer key to a new passphrase, then set that passphrase as `ATLAS_KEYSTORE_PASSPHRASE`. The server refuses to start if the passphrase doesn't open the issuer key.
 - **Telegram bot token:** revoke it with @BotFather and set the new one.
 - Remove the `ATLAS_*` values from the agent's MCP config, and delete the old data directory once the new server is verified.
 
@@ -78,4 +78,4 @@ sudo cat /var/lib/atlas-protocol/bootstrap-code.txt   # first registration's con
 
 - The self-check (`src/isolation.ts`) inspects top-level ownership and modes: the data dir, the package root, `dist/`, `node_modules/` and the Node binary. The installer sets these recursively. Changes made later by root aren't re-verified file by file.
 - The agent can still start its own gatekeeper instance through the launcher. That instance has the same state and the same rules, so it gains nothing a reconnect wouldn't.
-- The issuer key is still stored in plaintext inside the 0700 data dir; #45 tracks encrypting it.
+- With `ATLAS_KEYSTORE_PASSPHRASE` set, the issuer key is stored encrypted (`quantum-keypair.enc.json`). The passphrase lives in `atlas.env`, so this protects backups and copies of the data dir; the separate user is what keeps the agent out.

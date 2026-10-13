@@ -176,8 +176,6 @@ export interface NoiseSession {
 export interface NoiseHandshakeConfig {
   /** Local agent's static public key (ML-DSA-65; identity, not used for DH) */
   localStaticPublicKey: Uint8Array;
-  /** Local agent's static secret key (ML-DSA-65; identity, not used for DH) */
-  localStaticSecretKey: Uint8Array;
   /** Local ephemeral X25519 keypair (generated per-handshake) */
   localEphemeralPublicKey: Uint8Array;
   localEphemeralSecretKey: Uint8Array;
