@@ -9,6 +9,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { effectMatcherProblem, type EffectMatcher } from "./effects.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,6 +24,11 @@ export interface PolicyRule {
   reason?: string;
   /** MITRE ATT&CK technique ID (e.g. "T1059.004") */
   mitre_id?: string;
+  /**
+   * Optional effect matcher (#9). When set, the rule also requires at least
+   * one normalized effect of the request to match.
+   */
+  effect?: EffectMatcher;
 }
 
 export interface AtlasConfig {
@@ -793,10 +799,11 @@ const FILE_FIELD_VALIDATORS: Partial<Record<keyof AtlasConfig, (v: unknown) => s
         isString(r.tool_pattern) &&
         ["deny", "ask", "allow"].includes(r.action) &&
         (r.reason === undefined || isString(r.reason)) &&
-        (r.mitre_id === undefined || isString(r.mitre_id)),
+        (r.mitre_id === undefined || isString(r.mitre_id)) &&
+        (r.effect === undefined || effectMatcherProblem(r.effect) === null),
     )
       ? null
-      : "must be an array of {tool_pattern: string, action: deny|ask|allow} rules (whole set rejected so no deny rule is silently dropped)",
+      : "must be an array of {tool_pattern: string, action: deny|ask|allow, effect?: matcher} rules (whole set rejected so no deny rule is silently dropped)",
   audit_log_path: (v) => (isString(v) ? null : "must be a string"),
   audit_hmac_secret: (v) => (isString(v) ? null : "must be a string"),
   velocity_limit_per_minute: (v) => (isIntIn(1, 10_000)(v) ? null : "must be an integer 1–10000"),

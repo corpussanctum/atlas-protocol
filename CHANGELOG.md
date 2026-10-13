@@ -5,6 +5,18 @@ All notable changes to Atlas Protocol are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Canonical effects for policy rules** (#9, groundwork). Rules may carry an
+  `effect` matcher that tests what a request does: kind, target glob, scope,
+  recursion, reversibility, command. The vocabulary is in `src/effects.ts`
+  and `docs/effect-vocabulary.schema.json` (SPEC §3.3.2). A built-in
+  normalizer covers file tools from either a bare path or JSON tool input;
+  shell commands plug in through the `EffectNormalizer` interface and
+  produce no effects until a shell normalizer exists. `PolicyResult` reports
+  `effects` and `effects_complete`. When `input_preview` is redacted in the
+  audit log, effect targets are hashed too. A normalizer error only removes
+  effect evidence, and string rules apply as before. The default rule set is
+  unchanged. `tests/fixtures/policy-bypass.json` (empty) holds an
+  operator-maintained bypass corpus that the fixture suite runs.
 - **MCP conformance tests** (#7). `tests/mcp-conformance.test.ts` drives the
   server over stdio with raw JSON-RPC, not an SDK client. It covers
   initialize and version negotiation for every supported revision, ping,
